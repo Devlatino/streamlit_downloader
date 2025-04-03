@@ -154,7 +154,7 @@ def get_spotify_tracks(playlist_link):
         return None
 
 # Interfaccia Streamlit
-st.title("Downloader di Tracce Musicali")
+st.title("Downloader di Tracce Musicali (PIZZUNA)")
 st.write("Carica un file `tracce.txt` o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
 
 # Sezione per il link della playlist Spotify
