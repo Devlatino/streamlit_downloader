@@ -284,7 +284,6 @@ if tracce_source:
                 driver.get("https://lucida.su")
                 log_container.write(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
 
-                # Verifica che "service" sia presente prima di interagirci
                 try:
                     WebDriverWait(driver, 20).until(
                         EC.presence_of_element_located((By.ID, "service"))
@@ -419,10 +418,15 @@ if tracce_source:
 
         if st.session_state.pending_tracks:
             st.subheader("Tracce in Sospeso")
-            st.write("Alcune tracce non sono state trovate nei primi 3 servizi. Vuoi riprovare con criteri meno restrittivi?")
+            st.write(f"Alcune tracce non sono state trovate nei primi 3 servizi. Vuoi riprovare con criteri meno restrittivi? ({len(st.session_state.pending_tracks)} tracce in sospeso)")
             if st.button("Procedi con ricerca meno restrittiva"):
+                st.write("🔄 Avvio della ricerca meno restrittiva...")
                 pending_log_container = st.empty()
-                for pending_track in st.session_state.pending_tracks[:]:
+                
+                # Debug: mostra le tracce sospese
+                pending_log_container.write(f"📋 Tracce in sospeso da processare: {st.session_state.pending_tracks}")
+
+                for pending_track in st.session_state.pending_tracks[:]:  # Copia per modificare la lista
                     pending_log_container.write(f"### Ricerca per: {pending_track}")
                     artista_input, traccia_input = split_title(pending_track)
                     first_artist = artista_input.split(',')[0].strip()
