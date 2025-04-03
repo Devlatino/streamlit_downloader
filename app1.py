@@ -1,8 +1,10 @@
 import streamlit as st
 import os
 import tempfile
-import base64
 import zipfile
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+import re
 from selenium import webdriver
 import time
 from selenium.webdriver.common.by import By
@@ -11,6 +13,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import Select
 import glob
+
+# Credenziali Spotify
+CLIENT_ID = 'f147b13a0d2d40d7b5d0c3ac36b60769'
+CLIENT_SECRET = '566b72290ee94a60ada9164fabb6515b'
 
 # Inizializza lo stato della sessione per memorizzare i file scaricati
 if 'downloaded_files' not in st.session_state:
@@ -105,16 +111,84 @@ def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricat
         st.error(f"Errore nella creazione dello ZIP: {str(e)}")
         return None
 
+# Funzione per estrarre l'ID della playlist dal link
+def get_playlist_id(playlist_link):
+    match = re.search(r'playlist/(\w+)', playlist_link)
+    if match:
+        return match.group(1)
+    else:
+        raise ValueError("Link della playlist non valido.")
+
+# Funzione per ottenere le tracce da Spotify
+def get_spotify_tracks(playlist_link):
+    try:
+        auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
+        sp = spotipy.Spotify(auth_manager=auth_manager)
+        playlist_id = get_playlist_id(playlist_link)
+        
+        tracks = []
+        results = sp.playlist_tracks(playlist_id)
+        tracks.extend(results['items'])
+
+        while results['next']:
+            results = sp.next(results)
+            tracks.extend(results['items'])
+
+        track_list = []
+        for item in tracks:
+            track = item['track']
+            artists = ', '.join([artist['name'] for artist in track['artists']])
+            title = track['name']
+            track_list.append(f"{artists} - {title}")
+
+        return track_list
+    except Exception as e:
+        st.error(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
+        return None
+
 # Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali")
-st.write("Carica un file `tracce.txt` con l'elenco delle tracce (formato: Artista - Traccia).")
+st.write("Carica un file `tracce.txt` o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
+
+# Sezione per il link della playlist Spotify
+st.subheader("Genera tracce.txt da Spotify")
+st.write("Inserisci il link di una playlist Spotify (es. https://open.spotify.com/playlist/...) per creare automaticamente un file `tracce.txt` con le tracce della playlist.")
+playlist_link = st.text_input("Link della playlist Spotify")
+
+if playlist_link:
+    if st.button("Genera tracce.txt da Spotify"):
+        tracks = get_spotify_tracks(playlist_link)
+        if tracks:
+            # Salva le tracce in un file temporaneo
+            temp_file_path = os.path.join(download_dir, "tracce.txt")
+            with open(temp_file_path, 'w', encoding='utf-8') as f:
+                for track in tracks:
+                    f.write(track + '\n')
+            st.success(f"File `tracce.txt` generato con successo! Contiene {len(tracks)} tracce.")
+            st.session_state['spotify_file'] = temp_file_path
+        else:
+            st.error("Impossibile generare il file delle tracce.")
 
 # Upload del file tracce.txt
-uploaded_file = st.file_uploader("Carica il file tracce.txt", type=["txt"])
+uploaded_file = st.file_uploader("Oppure carica il file tracce.txt", type=["txt"])
 
-if uploaded_file is not None:
-    tracce = uploaded_file.read().decode("utf-8").splitlines()
-    tracce = [traccia for traccia in tracce if traccia.strip()]
+# Determina la fonte delle tracce
+if 'spotify_file' in st.session_state and os.path.exists(st.session_state['spotify_file']):
+    tracce_source = st.session_state['spotify_file']
+elif uploaded_file is not None:
+    tracce_source = uploaded_file
+else:
+    tracce_source = None
+
+if tracce_source:
+    # Leggi le tracce dalla fonte
+    if isinstance(tracce_source, str):  # File generato da Spotify
+        with open(tracce_source, 'r', encoding='utf-8') as f:
+            tracce = [line.strip() for line in f.readlines() if line.strip()]
+    else:  # File caricato dall'utente
+        tracce = tracce_source.read().decode("utf-8").splitlines()
+        tracce = [traccia.strip() for traccia in tracce if traccia.strip()]
+    
     tracce_totali = len(tracce)
     st.write(f"**Numero totale di tracce da scaricare:** {tracce_totali}")
 
@@ -122,17 +196,12 @@ if uploaded_file is not None:
         tracce_scaricate = 0
         progress_bar = st.progress(0)
         status_text = st.empty()
-        log_container = st.empty()  # Contenitore per log dinamici
+        log_container = st.empty()
         
         st.session_state.downloaded_files = []
 
         # Processa ogni traccia
         for idx, traccia in enumerate(tracce):
-            traccia = traccia.strip()
-            if not traccia:
-                continue
-
-            # Aggiorna dinamicamente lo stato
             status_text.text(f"🔄 Ricerca in corso per: {traccia} ({idx+1}/{tracce_totali})")
             log_container.write(f"### {traccia}")
 
@@ -253,7 +322,7 @@ if uploaded_file is not None:
 
             if not trovato:
                 log_container.write(f"❌ Traccia '{traccia}' non trovata in nessun servizio.")
-                log_container.empty()  # Pulizia log
+                log_container.empty()
                 continue
 
             time.sleep(8)
@@ -311,12 +380,8 @@ if uploaded_file is not None:
             else:
                 log_container.write(f"❌ Download fallito: {message}")
 
-            # Pulizia log dopo ogni traccia
             log_container.empty()
-            
-            # Aggiorna barra di progresso dinamicamente
-            progress = (idx + 1) / tracce_totali
-            progress_bar.progress(min(progress, 1.0))
+            progress_bar.progress((idx + 1) / tracce_totali)
             status_text.text(f"✅ {tracce_scaricate}/{tracce_totali} tracce scaricate")
 
         # Riepilogo finale
@@ -325,7 +390,6 @@ if uploaded_file is not None:
         st.write(f"**Numero totale di tracce:** {tracce_totali}")
         st.write(f"**Numero di tracce scaricate con successo:** {tracce_scaricate}")
 
-        # Creazione e download dell'archivio ZIP
         if st.session_state.downloaded_files:
             st.subheader("Download Archivio")
             zip_path = create_zip_archive(download_dir, st.session_state.downloaded_files)
