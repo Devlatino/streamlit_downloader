@@ -59,6 +59,27 @@ except Exception as e:
             st.error(f"Impossibile inizializzare Chrome: {str(e3)}")
             st.stop()
 
+# Servizi disponibili (questi verranno aggiornati quando il driver accede al sito)
+if 'servizi_disponibili' not in st.session_state:
+    st.session_state.servizi_disponibili = []
+
+# Formati disponibili
+FORMATI_DISPONIBILI = {
+    "m4a-aac": "AAC (.m4a)",
+    "mp3": "MP3 (.mp3)",  
+    "flac": "FLAC (.flac)",
+    "wav": "WAV (.wav)",
+    "ogg": "OGG (.ogg)"
+}
+
+# Qualità disponibili
+QUALITA_DISPONIBILI = {
+    "320": "320 kbps (Alta)",
+    "256": "256 kbps (Media-Alta)",
+    "192": "192 kbps (Media)",
+    "128": "128 kbps (Bassa)"
+}
+
 # Funzione per separare artista e traccia
 def split_title(full_title):
     parts = full_title.split(" - ", 1)
@@ -74,10 +95,12 @@ def normalize_artist(artist_string):
     return artist_string.split(',')[0].strip().lower()
 
 # Funzione per aspettare il download
-def wait_for_download(download_dir, existing_files, timeout=180):
+def wait_for_download(download_dir, existing_files, formato, timeout=180):
     start_time = time.time()
+    estensione = formato.split('-')[0] if '-' in formato else formato
+    
     while time.time() - start_time < timeout:
-        current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.m4a"))]
+        current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{estensione}"))]
         crdownload_files = glob.glob(os.path.join(download_dir, "*.crdownload"))
         
         new_files = [f for f in current_files if f not in existing_files]
@@ -98,7 +121,7 @@ def wait_for_download(download_dir, existing_files, timeout=180):
         if all_new_files:
             for f in all_new_files:
                 full_path = os.path.join(download_dir, f)
-                if os.path.isfile(full_path) and os.path.getsize(full_path) > 0 and f.endswith('.m4a'):
+                if os.path.isfile(full_path) and os.path.getsize(full_path) > 0 and f.endswith(f'.{estensione}'):
                     return True, f"Download completato: {f}", full_path
         
         time.sleep(5)
@@ -153,9 +176,85 @@ def get_spotify_tracks(playlist_link):
         st.error(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
         return None
 
+# Funzione per ottenere i servizi disponibili
+def get_available_services():
+    try:
+        driver.get("https://lucida.su")
+        time.sleep(5)
+        
+        select_service = WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.ID, "service"))
+        )
+        options = select_service.find_elements(By.TAG_NAME, "option")
+        
+        services = []
+        for i, option in enumerate(options):
+            if i > 0:  # Ignora la prima opzione che è "Seleziona servizio"
+                value = option.get_attribute("value")
+                text = option.text
+                services.append({"index": i, "value": value, "text": text})
+        
+        return services
+    except Exception as e:
+        st.error(f"Errore nel recupero dei servizi disponibili: {str(e)}")
+        return []
+
 # Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali (PIZZUNA)")
 st.write("Carica un file `tracce.txt` o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
+
+# Carica i servizi disponibili se non sono già stati caricati
+if not st.session_state.servizi_disponibili:
+    with st.spinner("Caricamento servizi disponibili..."):
+        st.session_state.servizi_disponibili = get_available_services()
+    
+    if st.session_state.servizi_disponibili:
+        st.success(f"Caricati {len(st.session_state.servizi_disponibili)} servizi disponibili.")
+    else:
+        st.warning("Impossibile caricare i servizi disponibili. Potrebbe essere necessario ricaricare la pagina.")
+
+# Sezione per le preferenze di download
+st.subheader("Preferenze di download")
+
+# Selezione del servizio
+servizio_opzioni = {f"{s['text']} (Servizio {s['index']})": s['index'] for s in st.session_state.servizi_disponibili}
+if servizio_opzioni:
+    servizio_predefinito = list(servizio_opzioni.keys())[0] if servizio_opzioni else None
+    servizio_selezionato = st.selectbox(
+        "Servizio preferito", 
+        options=list(servizio_opzioni.keys()),
+        index=0,
+        help="Seleziona il servizio di streaming da cui preferisci scaricare le tracce."
+    )
+    servizio_indice = servizio_opzioni[servizio_selezionato]
+else:
+    st.warning("Nessun servizio disponibile. Verrà utilizzato il metodo predefinito di ricerca tra tutti i servizi.")
+    servizio_indice = None
+
+# Creazione di due colonne per formato e qualità
+col1, col2 = st.columns(2)
+
+# Selezione del formato
+with col1:
+    formato_selezionato = st.selectbox(
+        "Formato audio",
+        options=list(FORMATI_DISPONIBILI.values()),
+        index=0,
+        help="Seleziona il formato audio per i file scaricati."
+    )
+    # Converti la selezione dal testo al valore corrispondente
+    formato_valore = list(FORMATI_DISPONIBILI.keys())[list(FORMATI_DISPONIBILI.values()).index(formato_selezionato)]
+
+# Selezione della qualità
+with col2:
+    qualita_selezionata = st.selectbox(
+        "Qualità audio",
+        options=list(QUALITA_DISPONIBILI.values()),
+        index=0,
+        help="Seleziona la qualità audio per i file scaricati."
+    )
+    # Converti la selezione dal testo al valore corrispondente
+    qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
 
 # Sezione per il link della playlist Spotify
 st.subheader("Genera tracce.txt da Spotify")
@@ -216,9 +315,17 @@ if tracce_source:
             log_container.write(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
 
             trovato = False
-            servizi_totali = 6
-
-            for servizio_idx in range(1, servizi_totali + 1):
+            
+            # Determina quali servizi utilizzare
+            if servizio_indice is not None:
+                # Usa solo il servizio selezionato
+                servizi_da_provare = [servizio_indice]
+            else:
+                # Usa tutti i servizi disponibili
+                servizi_totali = len(st.session_state.servizi_disponibili) if st.session_state.servizi_disponibili else 6
+                servizi_da_provare = range(1, servizi_totali + 1)
+            
+            for servizio_idx in servizi_da_provare:
                 driver.get("https://lucida.su")
                 log_container.write(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
 
@@ -351,8 +458,8 @@ if tracce_source:
                 select_convert = Select(WebDriverWait(driver, 30).until(
                     EC.element_to_be_clickable((By.ID, "convert"))
                 ))
-                select_convert.select_by_value("m4a-aac")
-                log_container.write(f"🎧 Formato 'm4a-aac' selezionato")
+                select_convert.select_by_value(formato_valore)
+                log_container.write(f"🎧 Formato '{formato_selezionato}' selezionato")
                 time.sleep(2)
             except Exception as e:
                 log_container.write(f"❌ Errore selezione formato: {str(e)}")
@@ -362,15 +469,18 @@ if tracce_source:
                 select_downsetting = Select(WebDriverWait(driver, 30).until(
                     EC.element_to_be_clickable((By.ID, "downsetting"))
                 ))
-                select_downsetting.select_by_value("320")
-                log_container.write(f"🔊 Qualità '320kbps' selezionata")
+                select_downsetting.select_by_value(qualita_valore)
+                log_container.write(f"🔊 Qualità '{qualita_selezionata}' selezionata")
                 time.sleep(2)
             except Exception as e:
                 log_container.write(f"❌ Errore selezione qualità: {str(e)}")
                 continue
 
+            # Ottieni estensione file in base al formato selezionato
+            estensione = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
+            
             existing_files = []
-            for ext in ["*.m4a", "*.mp3", "*.crdownload"]:
+            for ext in [f"*.{estensione}", "*.crdownload"]:
                 existing_files.extend([os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, ext))])
             
             log_container.write(f"📂 File esistenti prima del download: {existing_files}")
@@ -387,7 +497,7 @@ if tracce_source:
                 log_container.write(f"❌ Errore clic download: {str(e)}")
                 continue
 
-            success, message, downloaded_file = wait_for_download(download_dir, existing_files, timeout=180)
+            success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore, timeout=180)
             
             if success and downloaded_file:
                 if os.path.exists(downloaded_file) and os.path.getsize(downloaded_file) > 0:
@@ -409,6 +519,8 @@ if tracce_source:
         st.write("### Riepilogo")
         st.write(f"**Numero totale di tracce:** {tracce_totali}")
         st.write(f"**Numero di tracce scaricate con successo:** {tracce_scaricate}")
+        st.write(f"**Formato selezionato:** {formato_selezionato}")
+        st.write(f"**Qualità selezionata:** {qualita_selezionata}")
 
         if st.session_state.downloaded_files:
             st.subheader("Download Archivio")
