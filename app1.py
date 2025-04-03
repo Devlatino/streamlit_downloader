@@ -259,6 +259,25 @@ if uploaded_file is not None:
                         file_name=file_name,
                         mime="audio/m4a"
                     )
+                    if downloaded_files:
+    st.write("### File Scaricati")
+    for file_path in downloaded_files:
+        file_name = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path)
+        st.write(f"File: {file_name}, Dimensione: {file_size} bytes")
+        if file_size > 0:
+            try:
+                with open(file_path, "rb") as file:
+                    st.download_button(
+                        label=f"Scarica {file_name}",
+                        data=file,
+                        file_name=file_name,
+                        mime="audio/m4a"
+                    )
+            except Exception as e:
+                st.error(f"Errore nell'accesso al file: {str(e)}")
+        else:
+            st.warning(f"Il file {file_name} è vuoto e non può essere scaricato.")
 
 # Chiudi il browser alla fine
 driver.quit()
