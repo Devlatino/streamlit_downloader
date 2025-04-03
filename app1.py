@@ -9,8 +9,10 @@ from selenium.webdriver.chrome.service import Service  # Add this line
 from selenium.webdriver.support.ui import Select
 import glob
 # Configura la directory di download
+import tempfile
 
-download_dir = os.path.join(os.getcwd(), "downloads")  # Relative to app’s working directory
+# Usa una directory temporanea del sistema garantita scrivibile
+download_dir = tempfile.mkdtemp() # Relative to app’s working directory
 if not os.path.exists(download_dir):
     os.makedirs(download_dir)
     
