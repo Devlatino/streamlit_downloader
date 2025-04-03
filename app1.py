@@ -7,6 +7,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service  # Add this line
 from selenium.webdriver.support.ui import Select
+import glob
 # Configura la directory di download
 
 download_dir = os.path.join(os.getcwd(), "downloads")  # Relative to app’s working directory
