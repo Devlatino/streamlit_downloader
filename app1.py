@@ -151,7 +151,7 @@ def get_spotify_tracks(playlist_link):
 # Funzione per cercare tracce
 def search_track(driver, search_query, log_container, strict=True):
     driver.get("https://lucida.su")
-    log_container.write(f"🌐 Accesso a lucida.su")
+    log_container.write(f"🌐 Accesso a lucida.su per '{search_query}'")
 
     try:
         input_field = WebDriverWait(driver, 20).until(
@@ -177,30 +177,37 @@ def search_track(driver, search_query, log_container, strict=True):
         return False
 
     try:
+        # Aspetta che i risultati siano visibili o che appaia "No results found"
         WebDriverWait(driver, 60).until(
             lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
                      "No results found" in d.page_source
         )
         titoli = driver.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
         artisti = driver.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
-        log_container.write(f"📋 Risultati trovati: {len(titoli)} titoli")
         
+        log_container.write(f"📋 Trovati {len(titoli)} titoli e {len(artisti)} artisti")
+        log_container.write(f"Debug - Titoli: {[t.text for t in titoli]}")
+        log_container.write(f"Debug - Artisti: {[a.text for a in artisti]}")
+
         if not titoli:
             log_container.write("❌ Nessun risultato trovato")
             return False
 
         artista_input, traccia_input = split_title(search_query)
+        log_container.write(f"🔍 Ricerca: artista='{artista_input}', traccia='{traccia_input}'")
+
         for i, titolo in enumerate(titoli):
             titolo_testo = titolo.text.strip().lower()
             traccia_testo = traccia_input.lower()
 
-            log_container.write(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}'")
+            log_container.write(f"🔍 Confronto: '{traccia_testo}' vs '{titolo_testo}'")
             
             if traccia_testo in titolo_testo:
                 if strict and artista_input and i < len(artisti):
                     artista_testo = artisti[i].text.strip().lower()
+                    log_container.write(f"🔍 Confronto artista (strict): '{artista_input.lower()}' vs '{artista_testo}'")
                     if artista_input.lower() not in artista_testo:
-                        log_container.write(f"⚠️ Artista non corrispondente: '{artista_input.lower()}' vs '{artista_testo}'")
+                        log_container.write("⚠️ Artista non corrispondente")
                         continue
 
                 driver.execute_script("arguments[0].scrollIntoView(true);", titolo)
@@ -419,14 +426,13 @@ if tracce_source:
         if st.session_state.pending_tracks:
             st.subheader("Tracce in Sospeso")
             st.write(f"Alcune tracce non sono state trovate nei primi 3 servizi. Vuoi riprovare con criteri meno restrittivi? ({len(st.session_state.pending_tracks)} tracce in sospeso)")
-            if st.button("Procedi con ricerca meno restrittiva"):
+            if st.button("Procedi con ricerca meno restrittiva", key="relaxed_search"):
                 st.write("🔄 Avvio della ricerca meno restrittiva...")
                 pending_log_container = st.empty()
                 
-                # Debug: mostra le tracce sospese
                 pending_log_container.write(f"📋 Tracce in sospeso da processare: {st.session_state.pending_tracks}")
 
-                for pending_track in st.session_state.pending_tracks[:]:  # Copia per modificare la lista
+                for pending_track in st.session_state.pending_tracks[:]:
                     pending_log_container.write(f"### Ricerca per: {pending_track}")
                     artista_input, traccia_input = split_title(pending_track)
                     first_artist = artista_input.split(',')[0].strip()
