@@ -3,10 +3,11 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 
 # Configura la directory di download
-download_dir = "/Users/damiano/Desktop/chromedriver-mac-x64/downloads"
+
+download_dir = os.path.join(os.getcwd(), "downloads")  # Relative to app’s working directory
 if not os.path.exists(download_dir):
     os.makedirs(download_dir)
-
+    
 options = webdriver.ChromeOptions()
 options.add_experimental_option("prefs", {
     "download.default_directory": download_dir,
