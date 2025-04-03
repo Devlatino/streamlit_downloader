@@ -1,3 +1,4 @@
+import os  # Add this line
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 
