@@ -278,13 +278,18 @@ if tracce_source:
 
             trovato = False
             servizi_totali = 6
-            servizi_da_provare = min(3, servizi_totali)  # Prova solo i primi 3 servizi
+            servizi_da_provare = min(3, servizi_totali)
 
             for servizio_idx in range(1, servizi_da_provare + 1):
+                driver.get("https://lucida.su")
+                log_container.write(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
+
+                # Verifica che "service" sia presente prima di interagirci
                 try:
-                    select_service = WebDriverWait(driver, 20).until(
-                        EC.element_to_be_clickable((By.ID, "service"))
+                    WebDriverWait(driver, 20).until(
+                        EC.presence_of_element_located((By.ID, "service"))
                     )
+                    select_service = driver.find_element(By.ID, "service")
                     opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
                     if servizio_idx >= len(opzioni_service):
                         log_container.write(f"⚠️ Indice {servizio_idx} non valido per 'service'")
@@ -304,7 +309,7 @@ if tracce_source:
                         select.dispatchEvent(svelteEvent);
                     """, select_service, servizio_valore)
                     log_container.write(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
-                    time.sleep(5)  # Ridotto da 10 a 5 per velocizzare
+                    time.sleep(5)
                 except Exception as e:
                     log_container.write(f"❌ Errore selezione servizio: {str(e)}")
                     continue
@@ -319,7 +324,7 @@ if tracce_source:
                         continue
                     select_country.select_by_index(0)
                     log_container.write(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
-                    time.sleep(1)  # Ridotto da 2 a 1
+                    time.sleep(1)
                 except Exception as e:
                     log_container.write(f"❌ Errore selezione paese: {str(e)}")
                     continue
@@ -334,7 +339,7 @@ if tracce_source:
                 log_container.empty()
                 continue
 
-            time.sleep(5)  # Ridotto da 8 a 5
+            time.sleep(5)
 
             try:
                 select_convert = Select(WebDriverWait(driver, 30).until(
@@ -342,7 +347,7 @@ if tracce_source:
                 ))
                 select_convert.select_by_value("m4a-aac")
                 log_container.write(f"🎧 Formato 'm4a-aac' selezionato")
-                time.sleep(1)  # Ridotto da 2 a 1
+                time.sleep(1)
             except Exception as e:
                 log_container.write(f"❌ Errore selezione formato: {str(e)}")
                 continue
@@ -353,7 +358,7 @@ if tracce_source:
                 ))
                 select_downsetting.select_by_value("320")
                 log_container.write(f"🔊 Qualità '320kbps' selezionata")
-                time.sleep(1)  # Ridotto da 2 a 1
+                time.sleep(1)
             except Exception as e:
                 log_container.write(f"❌ Errore selezione qualità: {str(e)}")
                 continue
@@ -424,11 +429,16 @@ if tracce_source:
                     relaxed_query = f"{first_artist} - {traccia_input}"
 
                     trovato = False
+                    servizi_totali = 6
                     for servizio_idx in range(1, servizi_totali + 1):
+                        driver.get("https://lucida.su")
+                        pending_log_container.write(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
+
                         try:
-                            select_service = WebDriverWait(driver, 20).until(
-                                EC.element_to_be_clickable((By.ID, "service"))
+                            WebDriverWait(driver, 20).until(
+                                EC.presence_of_element_located((By.ID, "service"))
                             )
+                            select_service = driver.find_element(By.ID, "service")
                             opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
                             if servizio_idx >= len(opzioni_service):
                                 pending_log_container.write(f"⚠️ Indice {servizio_idx} non valido per 'service'")
