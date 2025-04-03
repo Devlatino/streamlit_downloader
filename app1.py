@@ -148,22 +148,22 @@ def get_spotify_tracks(playlist_link):
         st.error(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
         return None
 
-# Funzione per cercare tracce con criteri meno restrittivi
-def search_with_relaxed_criteria(driver, artist, title, log_container):
+# Funzione per cercare tracce
+def search_track(driver, search_query, log_container, strict=True):
     driver.get("https://lucida.su")
-    log_container.write(f"🌐 Accesso a lucida.su per ricerca meno restrittiva")
+    log_container.write(f"🌐 Accesso a lucida.su")
 
     try:
         input_field = WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((By.ID, "download"))
         )
         input_field.clear()
-        input_field.send_keys(f"{artist} - {title}")
+        input_field.send_keys(search_query)
         time.sleep(2)
-        log_container.write("✍️ Campo input compilato con primo artista e titolo")
+        log_container.write("✍️ Campo input compilato")
     except Exception as e:
         log_container.write(f"❌ Errore campo input: {str(e)}")
-        return None
+        return False
 
     try:
         go_button = WebDriverWait(driver, 20).until(
@@ -174,7 +174,7 @@ def search_with_relaxed_criteria(driver, artist, title, log_container):
         time.sleep(5)
     except Exception as e:
         log_container.write(f"❌ Errore clic 'go': {str(e)}")
-        return None
+        return False
 
     try:
         WebDriverWait(driver, 60).until(
@@ -182,16 +182,38 @@ def search_with_relaxed_criteria(driver, artist, title, log_container):
                      "No results found" in d.page_source
         )
         titoli = driver.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
+        artisti = driver.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
         log_container.write(f"📋 Risultati trovati: {len(titoli)} titoli")
         
-        if titoli:
-            return titoli[0].text  # Ritorna il primo risultato trovato per conferma
-        else:
+        if not titoli:
             log_container.write("❌ Nessun risultato trovato")
-            return None
+            return False
+
+        artista_input, traccia_input = split_title(search_query)
+        for i, titolo in enumerate(titoli):
+            titolo_testo = titolo.text.strip().lower()
+            traccia_testo = traccia_input.lower()
+
+            log_container.write(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}'")
+            
+            if traccia_testo in titolo_testo:
+                if strict and artista_input and i < len(artisti):
+                    artista_testo = artisti[i].text.strip().lower()
+                    if artista_input.lower() not in artista_testo:
+                        log_container.write(f"⚠️ Artista non corrispondente: '{artista_input.lower()}' vs '{artista_testo}'")
+                        continue
+
+                driver.execute_script("arguments[0].scrollIntoView(true);", titolo)
+                time.sleep(1)
+                titolo.click()
+                log_container.write(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
+                return True
+        
+        log_container.write("❌ Traccia non trovata nei risultati")
+        return False
     except Exception as e:
         log_container.write(f"❌ Errore ricerca risultati: {str(e)}")
-        return None
+        return False
 
 # Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali")
@@ -254,28 +276,11 @@ if tracce_source:
             artista_input, traccia_input = split_title(traccia)
             log_container.write(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
 
-            # Se ci sono più artisti, metti in sospeso se la ricerca fallisce
-            multiple_artists = ',' in artista_input
-
             trovato = False
             servizi_totali = 6
+            servizi_da_provare = min(3, servizi_totali)  # Prova solo i primi 3 servizi
 
-            for servizio_idx in range(1, servizi_totali + 1):
-                driver.get("https://lucida.su")
-                log_container.write(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
-
-                try:
-                    input_field = WebDriverWait(driver, 20).until(
-                        EC.element_to_be_clickable((By.ID, "download"))
-                    )
-                    input_field.clear()
-                    input_field.send_keys(traccia)
-                    time.sleep(2)
-                    log_container.write("✍️ Campo input compilato")
-                except Exception as e:
-                    log_container.write(f"❌ Errore campo input: {str(e)}")
-                    continue
-
+            for servizio_idx in range(1, servizi_da_provare + 1):
                 try:
                     select_service = WebDriverWait(driver, 20).until(
                         EC.element_to_be_clickable((By.ID, "service"))
@@ -299,13 +304,13 @@ if tracce_source:
                         select.dispatchEvent(svelteEvent);
                     """, select_service, servizio_valore)
                     log_container.write(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
-                    time.sleep(10)
+                    time.sleep(5)  # Ridotto da 10 a 5 per velocizzare
                 except Exception as e:
                     log_container.write(f"❌ Errore selezione servizio: {str(e)}")
                     continue
 
                 try:
-                    WebDriverWait(driver, 90).until(
+                    WebDriverWait(driver, 60).until(
                         lambda driver: len(driver.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0
                     )
                     select_country = Select(driver.find_element(By.ID, "country"))
@@ -314,71 +319,22 @@ if tracce_source:
                         continue
                     select_country.select_by_index(0)
                     log_container.write(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
-                    time.sleep(2)
+                    time.sleep(1)  # Ridotto da 2 a 1
                 except Exception as e:
                     log_container.write(f"❌ Errore selezione paese: {str(e)}")
                     continue
 
-                try:
-                    go_button = WebDriverWait(driver, 20).until(
-                        EC.element_to_be_clickable((By.ID, "go"))
-                    )
-                    go_button.click()
-                    log_container.write("▶️ Pulsante 'go' cliccato")
-                    time.sleep(5)
-                except Exception as e:
-                    log_container.write(f"❌ Errore clic 'go': {str(e)}")
-                    continue
-
-                try:
-                    WebDriverWait(driver, 60).until(
-                        lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
-                                 "No results found" in d.page_source
-                    )
-                    titoli = driver.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
-                    artisti = driver.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
-
-                    log_container.write(f"📋 Risultati trovati: {len(titoli)} titoli")
-                    
-                    for i, titolo in enumerate(titoli):
-                        titolo_testo = titolo.text.strip().lower()
-                        traccia_testo = traccia_input.lower()
-
-                        log_container.write(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}'")
-                        
-                        if traccia_testo in titolo_testo:
-                            if artista_input and i < len(artisti):
-                                artista_testo = artisti[i].text.strip().lower()
-                                if artista_input.lower() not in artista_testo:
-                                    log_container.write(f"⚠️ Artista non corrispondente: '{artista_input.lower()}' vs '{artista_testo}'")
-                                    continue
-
-                            driver.execute_script("arguments[0].scrollIntoView(true);", titolo)
-                            time.sleep(1)
-                            titolo.click()
-                            trovato = True
-                            log_container.write(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
-                            break
-                    
-                    if not trovato:
-                        log_container.write(f"❌ Traccia non trovata in servizio {servizio_idx}")
-                except Exception as e:
-                    log_container.write(f"❌ Errore ricerca risultati: {str(e)}")
-                    continue
-
-                if trovato:
+                if search_track(driver, traccia, log_container, strict=True):
+                    trovato = True
                     break
 
             if not trovato:
-                if multiple_artists:
-                    log_container.write(f"⏳ Traccia con più artisti messa in sospeso: '{traccia}'")
-                    st.session_state.pending_tracks.append(traccia)
-                else:
-                    log_container.write(f"❌ Traccia '{traccia}' non trovata in nessun servizio.")
+                log_container.write(f"⏳ Traccia messa in sospeso dopo {servizi_da_provare} servizi: '{traccia}'")
+                st.session_state.pending_tracks.append(traccia)
                 log_container.empty()
                 continue
 
-            time.sleep(8)
+            time.sleep(5)  # Ridotto da 8 a 5
 
             try:
                 select_convert = Select(WebDriverWait(driver, 30).until(
@@ -386,7 +342,7 @@ if tracce_source:
                 ))
                 select_convert.select_by_value("m4a-aac")
                 log_container.write(f"🎧 Formato 'm4a-aac' selezionato")
-                time.sleep(2)
+                time.sleep(1)  # Ridotto da 2 a 1
             except Exception as e:
                 log_container.write(f"❌ Errore selezione formato: {str(e)}")
                 continue
@@ -397,15 +353,12 @@ if tracce_source:
                 ))
                 select_downsetting.select_by_value("320")
                 log_container.write(f"🔊 Qualità '320kbps' selezionata")
-                time.sleep(2)
+                time.sleep(1)  # Ridotto da 2 a 1
             except Exception as e:
                 log_container.write(f"❌ Errore selezione qualità: {str(e)}")
                 continue
 
-            existing_files = []
-            for ext in ["*.m4a", "*.mp3", "*.crdownload"]:
-                existing_files.extend([os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, ext))])
-            
+            existing_files = glob.glob(os.path.join(download_dir, "*.*"))
             log_container.write(f"📂 File esistenti prima del download: {existing_files}")
 
             try:
@@ -461,68 +414,114 @@ if tracce_source:
 
         if st.session_state.pending_tracks:
             st.subheader("Tracce in Sospeso")
-            st.write("Ci sono tracce con più artisti che non sono state trovate. Vuoi procedere con una ricerca meno restrittiva?")
+            st.write("Alcune tracce non sono state trovate nei primi 3 servizi. Vuoi riprovare con criteri meno restrittivi?")
             if st.button("Procedi con ricerca meno restrittiva"):
                 pending_log_container = st.empty()
-                for pending_track in st.session_state.pending_tracks[:]:  # Copia per modificare durante il ciclo
+                for pending_track in st.session_state.pending_tracks[:]:
                     pending_log_container.write(f"### Ricerca per: {pending_track}")
                     artista_input, traccia_input = split_title(pending_track)
-                    first_artist = artista_input.split(',')[0].strip()  # Usa solo il primo artista
+                    first_artist = artista_input.split(',')[0].strip()
+                    relaxed_query = f"{first_artist} - {traccia_input}"
 
-                    result = search_with_relaxed_criteria(driver, first_artist, traccia_input, pending_log_container)
-                    if result:
-                        pending_log_container.write(f"🔍 Trovato: '{result}'")
-                        if st.checkbox(f"Conferma: '{result}' è la traccia corretta per '{pending_track}'?", key=f"confirm_{pending_track}"):
-                            # Procedi con il download
-                            time.sleep(8)
-                            try:
-                                select_convert = Select(WebDriverWait(driver, 30).until(
-                                    EC.element_to_be_clickable((By.ID, "convert"))
-                                ))
-                                select_convert.select_by_value("m4a-aac")
-                                pending_log_container.write(f"🎧 Formato 'm4a-aac' selezionato")
-                                time.sleep(2)
-                            except Exception as e:
-                                pending_log_container.write(f"❌ Errore selezione formato: {str(e)}")
+                    trovato = False
+                    for servizio_idx in range(1, servizi_totali + 1):
+                        try:
+                            select_service = WebDriverWait(driver, 20).until(
+                                EC.element_to_be_clickable((By.ID, "service"))
+                            )
+                            opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
+                            if servizio_idx >= len(opzioni_service):
+                                pending_log_container.write(f"⚠️ Indice {servizio_idx} non valido per 'service'")
                                 continue
 
-                            try:
-                                select_downsetting = Select(WebDriverWait(driver, 30).until(
-                                    EC.element_to_be_clickable((By.ID, "downsetting"))
-                                ))
-                                select_downsetting.select_by_value("320")
-                                pending_log_container.write(f"🔊 Qualità '320kbps' selezionata")
-                                time.sleep(2)
-                            except Exception as e:
-                                pending_log_container.write(f"❌ Errore selezione qualità: {str(e)}")
-                                continue
+                            servizio_valore = opzioni_service[servizio_idx].get_attribute("value")
+                            driver.execute_script("""
+                                var select = arguments[0];
+                                var valore = arguments[1];
+                                select.value = valore;
+                                var events = ['mousedown', 'click', 'change', 'input', 'blur'];
+                                events.forEach(function(eventType) {
+                                    var event = new Event(eventType, { bubbles: true });
+                                    select.dispatchEvent(event);
+                                });
+                                var svelteEvent = new CustomEvent('svelte-change', { bubbles: true });
+                                select.dispatchEvent(svelteEvent);
+                            """, select_service, servizio_valore)
+                            pending_log_container.write(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
+                            time.sleep(5)
+                        except Exception as e:
+                            pending_log_container.write(f"❌ Errore selezione servizio: {str(e)}")
+                            continue
 
-                            existing_files = glob.glob(os.path.join(download_dir, "*.*"))
-                            try:
-                                download_button = WebDriverWait(driver, 30).until(
-                                    EC.element_to_be_clickable((By.CLASS_NAME, "download-button"))
-                                )
-                                driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
-                                time.sleep(1)
-                                download_button.click()
-                                pending_log_container.write("⬇️ Pulsante di download cliccato")
-                            except Exception as e:
-                                pending_log_container.write(f"❌ Errore clic download: {str(e)}")
+                        try:
+                            WebDriverWait(driver, 60).until(
+                                lambda driver: len(driver.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0
+                            )
+                            select_country = Select(driver.find_element(By.ID, "country"))
+                            if not select_country.options:
+                                pending_log_container.write(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
                                 continue
+                            select_country.select_by_index(0)
+                            pending_log_container.write(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
+                            time.sleep(1)
+                        except Exception as e:
+                            pending_log_container.write(f"❌ Errore selezione paese: {str(e)}")
+                            continue
 
-                            success, message, downloaded_file = wait_for_download(download_dir, existing_files, timeout=180)
-                            if success and downloaded_file:
-                                if os.path.exists(downloaded_file) and os.path.getsize(downloaded_file) > 0:
-                                    tracce_scaricate += 1
-                                    pending_log_container.write(f"✅ Download completato per: {pending_track}")
-                                    st.session_state.downloaded_files.append(downloaded_file)
-                                    st.session_state.pending_tracks.remove(pending_track)
-                                else:
-                                    pending_log_container.write(f"❌ File non trovato o vuoto")
+                        if search_track(driver, relaxed_query, pending_log_container, strict=False):
+                            trovato = True
+                            break
+
+                    if trovato:
+                        time.sleep(5)
+                        try:
+                            select_convert = Select(WebDriverWait(driver, 30).until(
+                                EC.element_to_be_clickable((By.ID, "convert"))
+                            ))
+                            select_convert.select_by_value("m4a-aac")
+                            pending_log_container.write(f"🎧 Formato 'm4a-aac' selezionato")
+                            time.sleep(1)
+                        except Exception as e:
+                            pending_log_container.write(f"❌ Errore selezione formato: {str(e)}")
+                            continue
+
+                        try:
+                            select_downsetting = Select(WebDriverWait(driver, 30).until(
+                                EC.element_to_be_clickable((By.ID, "downsetting"))
+                            ))
+                            select_downsetting.select_by_value("320")
+                            pending_log_container.write(f"🔊 Qualità '320kbps' selezionata")
+                            time.sleep(1)
+                        except Exception as e:
+                            pending_log_container.write(f"❌ Errore selezione qualità: {str(e)}")
+                            continue
+
+                        existing_files = glob.glob(os.path.join(download_dir, "*.*"))
+                        try:
+                            download_button = WebDriverWait(driver, 30).until(
+                                EC.element_to_be_clickable((By.CLASS_NAME, "download-button"))
+                            )
+                            driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
+                            time.sleep(1)
+                            download_button.click()
+                            pending_log_container.write("⬇️ Pulsante di download cliccato")
+                        except Exception as e:
+                            pending_log_container.write(f"❌ Errore clic download: {str(e)}")
+                            continue
+
+                        success, message, downloaded_file = wait_for_download(download_dir, existing_files, timeout=180)
+                        if success and downloaded_file:
+                            if os.path.exists(downloaded_file) and os.path.getsize(downloaded_file) > 0:
+                                tracce_scaricate += 1
+                                pending_log_container.write(f"✅ Download completato per: {pending_track}")
+                                st.session_state.downloaded_files.append(downloaded_file)
+                                st.session_state.pending_tracks.remove(pending_track)
                             else:
-                                pending_log_container.write(f"❌ Download fallito: {message}")
+                                pending_log_container.write(f"❌ File non trovato o vuoto")
+                        else:
+                            pending_log_container.write(f"❌ Download fallito: {message}")
                     else:
-                        pending_log_container.write(f"❌ Nessun risultato trovato per '{pending_track}'")
+                        pending_log_container.write(f"❌ Traccia '{pending_track}' non trovata con criteri rilassati")
                     pending_log_container.empty()
 
                 # Riepilogo finale
