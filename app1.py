@@ -18,9 +18,11 @@ import glob
 CLIENT_ID = 'f147b13a0d2d40d7b5d0c3ac36b60769'
 CLIENT_SECRET = '566b72290ee94a60ada9164fabb6515b'
 
-# Inizializza lo stato della sessione per memorizzare i file scaricati
+# Inizializza lo stato della sessione
 if 'downloaded_files' not in st.session_state:
     st.session_state.downloaded_files = []
+if 'pending_tracks' not in st.session_state:
+    st.session_state.pending_tracks = []
 
 # Configura la directory di download
 download_dir = tempfile.mkdtemp()
@@ -146,20 +148,64 @@ def get_spotify_tracks(playlist_link):
         st.error(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
         return None
 
+# Funzione per cercare tracce con criteri meno restrittivi
+def search_with_relaxed_criteria(driver, artist, title, log_container):
+    driver.get("https://lucida.su")
+    log_container.write(f"🌐 Accesso a lucida.su per ricerca meno restrittiva")
+
+    try:
+        input_field = WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.ID, "download"))
+        )
+        input_field.clear()
+        input_field.send_keys(f"{artist} - {title}")
+        time.sleep(2)
+        log_container.write("✍️ Campo input compilato con primo artista e titolo")
+    except Exception as e:
+        log_container.write(f"❌ Errore campo input: {str(e)}")
+        return None
+
+    try:
+        go_button = WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.ID, "go"))
+        )
+        go_button.click()
+        log_container.write("▶️ Pulsante 'go' cliccato")
+        time.sleep(5)
+    except Exception as e:
+        log_container.write(f"❌ Errore clic 'go': {str(e)}")
+        return None
+
+    try:
+        WebDriverWait(driver, 60).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
+                     "No results found" in d.page_source
+        )
+        titoli = driver.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
+        log_container.write(f"📋 Risultati trovati: {len(titoli)} titoli")
+        
+        if titoli:
+            return titoli[0].text  # Ritorna il primo risultato trovato per conferma
+        else:
+            log_container.write("❌ Nessun risultato trovato")
+            return None
+    except Exception as e:
+        log_container.write(f"❌ Errore ricerca risultati: {str(e)}")
+        return None
+
 # Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali")
 st.write("Carica un file `tracce.txt` o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
 
 # Sezione per il link della playlist Spotify
 st.subheader("Genera tracce.txt da Spotify")
-st.write("Inserisci il link di una playlist Spotify (es. https://open.spotify.com/playlist/...) per creare automaticamente un file `tracce.txt` con le tracce della playlist.")
+st.write("Inserisci il link di una playlist Spotify (es. https://open.spotify.com/playlist/...) per creare automaticamente un file `tracce.txt`.")
 playlist_link = st.text_input("Link della playlist Spotify")
 
 if playlist_link:
     if st.button("Genera tracce.txt da Spotify"):
         tracks = get_spotify_tracks(playlist_link)
         if tracks:
-            # Salva le tracce in un file temporaneo
             temp_file_path = os.path.join(download_dir, "tracce.txt")
             with open(temp_file_path, 'w', encoding='utf-8') as f:
                 for track in tracks:
@@ -181,11 +227,10 @@ else:
     tracce_source = None
 
 if tracce_source:
-    # Leggi le tracce dalla fonte
-    if isinstance(tracce_source, str):  # File generato da Spotify
+    if isinstance(tracce_source, str):
         with open(tracce_source, 'r', encoding='utf-8') as f:
             tracce = [line.strip() for line in f.readlines() if line.strip()]
-    else:  # File caricato dall'utente
+    else:
         tracce = tracce_source.read().decode("utf-8").splitlines()
         tracce = [traccia.strip() for traccia in tracce if traccia.strip()]
     
@@ -199,14 +244,18 @@ if tracce_source:
         log_container = st.empty()
         
         st.session_state.downloaded_files = []
+        st.session_state.pending_tracks = []
 
-        # Processa ogni traccia
+        # Prima fase: processa tracce normali
         for idx, traccia in enumerate(tracce):
             status_text.text(f"🔄 Ricerca in corso per: {traccia} ({idx+1}/{tracce_totali})")
             log_container.write(f"### {traccia}")
 
             artista_input, traccia_input = split_title(traccia)
             log_container.write(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
+
+            # Se ci sono più artisti, metti in sospeso se la ricerca fallisce
+            multiple_artists = ',' in artista_input
 
             trovato = False
             servizi_totali = 6
@@ -321,7 +370,11 @@ if tracce_source:
                     break
 
             if not trovato:
-                log_container.write(f"❌ Traccia '{traccia}' non trovata in nessun servizio.")
+                if multiple_artists:
+                    log_container.write(f"⏳ Traccia con più artisti messa in sospeso: '{traccia}'")
+                    st.session_state.pending_tracks.append(traccia)
+                else:
+                    log_container.write(f"❌ Traccia '{traccia}' non trovata in nessun servizio.")
                 log_container.empty()
                 continue
 
@@ -384,29 +437,117 @@ if tracce_source:
             progress_bar.progress((idx + 1) / tracce_totali)
             status_text.text(f"✅ {tracce_scaricate}/{tracce_totali} tracce scaricate")
 
-        # Riepilogo finale
-        status_text.text(f"🏁 Completato! {tracce_scaricate}/{tracce_totali} tracce scaricate")
-        st.write("### Riepilogo")
+        # Riepilogo prima fase
+        status_text.text(f"🏁 Prima fase completata! {tracce_scaricate}/{tracce_totali} tracce scaricate")
+        st.write("### Riepilogo Prima Fase")
         st.write(f"**Numero totale di tracce:** {tracce_totali}")
-        st.write(f"**Numero di tracce scaricate con successo:** {tracce_scaricate}")
+        st.write(f"**Numero di tracce scaricate:** {tracce_scaricate}")
+        st.write(f"**Tracce in sospeso:** {len(st.session_state.pending_tracks)}")
 
+        # Offri opzioni all'utente
         if st.session_state.downloaded_files:
-            st.subheader("Download Archivio")
             zip_path = create_zip_archive(download_dir, st.session_state.downloaded_files)
             if zip_path and os.path.exists(zip_path):
                 with open(zip_path, "rb") as zip_file:
                     st.download_button(
-                        label="📥 Scarica tutte le tracce (ZIP)",
+                        label="📥 Scarica le tracce già pronte (ZIP)",
                         data=zip_file,
-                        file_name="tracce_scaricate.zip",
+                        file_name="tracce_pronte.zip",
                         mime="application/zip",
-                        key="download_zip"
+                        key="download_partial_zip"
                     )
-                st.write(f"File inclusi nell'archivio: {[os.path.basename(f) for f in st.session_state.downloaded_files]}")
             else:
-                st.error("Errore: l'archivio ZIP non è stato creato correttamente.")
-        else:
-            st.warning("Nessun file scaricato con successo.")
+                st.error("Errore: l'archivio ZIP parziale non è stato creato.")
+
+        if st.session_state.pending_tracks:
+            st.subheader("Tracce in Sospeso")
+            st.write("Ci sono tracce con più artisti che non sono state trovate. Vuoi procedere con una ricerca meno restrittiva?")
+            if st.button("Procedi con ricerca meno restrittiva"):
+                pending_log_container = st.empty()
+                for pending_track in st.session_state.pending_tracks[:]:  # Copia per modificare durante il ciclo
+                    pending_log_container.write(f"### Ricerca per: {pending_track}")
+                    artista_input, traccia_input = split_title(pending_track)
+                    first_artist = artista_input.split(',')[0].strip()  # Usa solo il primo artista
+
+                    result = search_with_relaxed_criteria(driver, first_artist, traccia_input, pending_log_container)
+                    if result:
+                        pending_log_container.write(f"🔍 Trovato: '{result}'")
+                        if st.checkbox(f"Conferma: '{result}' è la traccia corretta per '{pending_track}'?", key=f"confirm_{pending_track}"):
+                            # Procedi con il download
+                            time.sleep(8)
+                            try:
+                                select_convert = Select(WebDriverWait(driver, 30).until(
+                                    EC.element_to_be_clickable((By.ID, "convert"))
+                                ))
+                                select_convert.select_by_value("m4a-aac")
+                                pending_log_container.write(f"🎧 Formato 'm4a-aac' selezionato")
+                                time.sleep(2)
+                            except Exception as e:
+                                pending_log_container.write(f"❌ Errore selezione formato: {str(e)}")
+                                continue
+
+                            try:
+                                select_downsetting = Select(WebDriverWait(driver, 30).until(
+                                    EC.element_to_be_clickable((By.ID, "downsetting"))
+                                ))
+                                select_downsetting.select_by_value("320")
+                                pending_log_container.write(f"🔊 Qualità '320kbps' selezionata")
+                                time.sleep(2)
+                            except Exception as e:
+                                pending_log_container.write(f"❌ Errore selezione qualità: {str(e)}")
+                                continue
+
+                            existing_files = glob.glob(os.path.join(download_dir, "*.*"))
+                            try:
+                                download_button = WebDriverWait(driver, 30).until(
+                                    EC.element_to_be_clickable((By.CLASS_NAME, "download-button"))
+                                )
+                                driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
+                                time.sleep(1)
+                                download_button.click()
+                                pending_log_container.write("⬇️ Pulsante di download cliccato")
+                            except Exception as e:
+                                pending_log_container.write(f"❌ Errore clic download: {str(e)}")
+                                continue
+
+                            success, message, downloaded_file = wait_for_download(download_dir, existing_files, timeout=180)
+                            if success and downloaded_file:
+                                if os.path.exists(downloaded_file) and os.path.getsize(downloaded_file) > 0:
+                                    tracce_scaricate += 1
+                                    pending_log_container.write(f"✅ Download completato per: {pending_track}")
+                                    st.session_state.downloaded_files.append(downloaded_file)
+                                    st.session_state.pending_tracks.remove(pending_track)
+                                else:
+                                    pending_log_container.write(f"❌ File non trovato o vuoto")
+                            else:
+                                pending_log_container.write(f"❌ Download fallito: {message}")
+                    else:
+                        pending_log_container.write(f"❌ Nessun risultato trovato per '{pending_track}'")
+                    pending_log_container.empty()
+
+                # Riepilogo finale
+                status_text.text(f"🏁 Completato! {tracce_scaricate}/{tracce_totali} tracce scaricate")
+                st.write("### Riepilogo Finale")
+                st.write(f"**Numero totale di tracce:** {tracce_totali}")
+                st.write(f"**Numero di tracce scaricate:** {tracce_scaricate}")
+                st.write(f"**Tracce rimaste in sospeso:** {len(st.session_state.pending_tracks)}")
+
+                if st.session_state.downloaded_files:
+                    zip_path = create_zip_archive(download_dir, st.session_state.downloaded_files)
+                    if zip_path and os.path.exists(zip_path):
+                        with open(zip_path, "rb") as zip_file:
+                            st.download_button(
+                                label="📥 Scarica tutte le tracce (ZIP)",
+                                data=zip_file,
+                                file_name="tracce_scaricate.zip",
+                                mime="application/zip",
+                                key="download_final_zip"
+                            )
+                        st.write(f"File inclusi nell'archivio: {[os.path.basename(f) for f in st.session_state.downloaded_files]}")
+                    else:
+                        st.error("Errore: l'archivio ZIP finale non è stato creato.")
+                else:
+                    st.warning("Nessun file scaricato con successo.")
 
 # Chiudi il browser
 driver.quit()
