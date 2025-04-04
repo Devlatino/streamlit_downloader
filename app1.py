@@ -502,14 +502,14 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             if match_percent >= 0.5 or contains_check or traccia_normalizzata in titolo_normalizzato:
         # Verifica l'artista in modo più flessibile se disponibile
                 if artista_input and i < len(artisti):
-                artista_normalizzato = normalize_artist(artista_input)
-                artista_risultato = artisti[i].text.strip().lower()
+                    artista_normalizzato = normalize_artist(artista_input)
+                    artista_risultato = artisti[i].text.strip().lower()
             
             # Approccio più permissivo per gli artisti 
             # (verifica solo se molto diversi e la corrispondenza del titolo non è forte)
-                artisti_simili = similar_artists(artista_normalizzato, artista_risultato)
-            if not artisti_simili and match_percent < 0.7:
-                log_messages.append(f"⚠️ Possibile artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
+                    artisti_simili = similar_artists(artista_normalizzato, artista_risultato)
+                if not artisti_simili and match_percent < 0.7:
+                    log_messages.append(f"⚠️ Possibile artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
                 continue
         
             browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
