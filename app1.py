@@ -596,10 +596,10 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         status_placeholder = st.empty()
         
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-    futures = [
-        executor.submit(
-            download_track_thread_safe, 
-            track, servizio_indice, formato_valore, qualita_valore, use_proxy
+        futures = [
+            executor.submit(
+                download_track_thread_safe, 
+                track, servizio_indice, formato_valore, qualita_valore, use_proxy
         ) 
         for track in tracks_to_download
     ]
