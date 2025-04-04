@@ -874,9 +874,9 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     st.write(f"**Tracce non scaricate:** {len(st.session_state['pending_tracks'])}")
     
    if st.session_state['pending_tracks']:
-    retry_button = st.button("Riprova con servizio alternativo")
-    if retry_button:
-        alternative_service = (servizio_indice + 1) % len(servizio_opzioni)
+        retry_button = st.button("Riprova con servizio alternativo")
+        if retry_button:
+            alternative_service = (servizio_indice + 1) % len(servizio_opzioni)
         # Avvia nuovo download per le tracce pendenti ma con il servizio alternativo
         
         if st.session_state['download_errors']:
