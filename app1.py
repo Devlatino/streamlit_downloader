@@ -21,6 +21,19 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+
+
+
+# 1. Sicurezza e Conformità Legale
+# Rimuovi Credenziali Hardcoded: Utilizza secrets di Streamlit
+CLIENT_ID = st.secrets.get('SPOTIFY', {}).get('CLIENT_ID')
+CLIENT_SECRET = st.secrets.get('SPOTIFY', {}).get('CLIENT_SECRET')
+
+if not CLIENT_ID or not CLIENT_SECRET:
+    st.error("Le credenziali Spotify non sono state configurate in Streamlit Secrets.")
+    st.stop()
+
+
 # Inizializza lo stato della sessione
 if 'downloaded_files' not in st.session_state:
     st.session_state.downloaded_files = []
@@ -42,17 +55,6 @@ if 'download_progress' not in st.session_state:
     st.session_state.download_progress = {}  # Initialize download_progress HERE
 if 'download_errors' not in st.session_state:
     st.session_state.download_errors = {}
-
-
-
-# 1. Sicurezza e Conformità Legale
-# Rimuovi Credenziali Hardcoded: Utilizza secrets di Streamlit
-CLIENT_ID = st.secrets.get('SPOTIFY', {}).get('CLIENT_ID')
-CLIENT_SECRET = st.secrets.get('SPOTIFY', {}).get('CLIENT_SECRET')
-
-if not CLIENT_ID or not CLIENT_SECRET:
-    st.error("Le credenziali Spotify non sono state configurate in Streamlit Secrets.")
-    st.stop()
 
 
 
