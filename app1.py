@@ -561,14 +561,15 @@ if tracks_to_download:
                         st.write(f"**{track_key}:**")
                         for error in errors:
                             st.write(f"- {error}")
-#Pulizia iniziale del pool di browser all'avvio (se presente)
+                            
+# Pulizia iniziale del pool di browser all'avvio (se presente)
 if st.session_state.browser_pool:
-for browser in st.session_state.browser_pool:
-try:
-browser.quit()
-except:
-pass
-st.session_state.browser_pool = []# Chiusura del browser pool alla chiusura dell'app (non direttamente gestibile in Streamlit,
+  for browser in st.session_state.browser_pool:
+    try:
+      browser.quit()
+    except:
+      pass
+  st.session_state.browser_pool = []
 # ma è buona pratica se si gestisse il ciclo di vita dell'app in modo diverso)
 # import atexit
 # def close_browser_pool():
