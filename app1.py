@@ -7,16 +7,14 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from selenium import webdriver
 import time
+import random
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import Select
 import glob
-import threading
-from queue import Queue
 import concurrent.futures
-import random
 
 # Credenziali Spotify
 CLIENT_ID = 'f147b13a0d2d40d7b5d0c3ac36b60769'
@@ -50,8 +48,15 @@ def get_chrome_options():
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-popup-blocking")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36") # Aggiunto user-agent
-
+    # Aggiungi user agent diversificato (esempio)
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; rv:121.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ]
+    options.add_argument(f"user-agent={random.choice(user_agents)}")
     return options
 
 # Servizi disponibili
@@ -61,7 +66,7 @@ if 'servizi_disponibili' not in st.session_state:
 # Formati e qualità disponibili
 FORMATI_DISPONIBILI = {
     "m4a-aac": "AAC (.m4a)",
-    "mp3": "MP3 (.mp3)",  
+    "mp3": "MP3 (.mp3)",
     "flac": "FLAC (.flac)",
     "wav": "WAV (.wav)",
     "ogg": "OGG (.ogg)"
@@ -90,33 +95,33 @@ def normalize_artist(artist_string):
 def wait_for_download(download_dir, existing_files, formato, timeout=180):
     start_time = time.time()
     estensione = formato.split('-')[0] if '-' in formato else formato
-    
+
     while time.time() - start_time < timeout:
         current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{estensione}"))]
         crdownload_files = glob.glob(os.path.join(download_dir, "*.crdownload"))
-        
+
         new_files = [f for f in current_files if f not in existing_files]
         for file in new_files:
             if os.path.getsize(file) > 0:
                 return True, f"Download completato: {file}", file
-        
+
         if crdownload_files:
             time.sleep(5)
             continue
-        
+
         if time.time() - start_time < 30:
             time.sleep(5)
             continue
-            
+
         all_new_files = [f for f in os.listdir(download_dir) if os.path.join(download_dir, f) not in existing_files]
         if all_new_files:
             for f in all_new_files:
                 full_path = os.path.join(download_dir, f)
                 if os.path.isfile(full_path) and os.path.getsize(full_path) > 0 and f.endswith(f'.{estensione}'):
                     return True, f"Download completato: {f}", full_path
-        
+
         time.sleep(5)
-    
+
     return False, f"Timeout raggiunto ({timeout}s), nessun download completato.", None
 
 # Funzione per creare l'archivio ZIP
@@ -146,7 +151,7 @@ def get_spotify_tracks(playlist_link):
         auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
         sp = spotipy.Spotify(auth_manager=auth_manager)
         playlist_id = get_playlist_id(playlist_link)
-        
+
         tracks = []
         results = sp.playlist_tracks(playlist_id)
         tracks.extend(results['items'])
@@ -154,7 +159,7 @@ def get_spotify_tracks(playlist_link):
             results = sp.next(results)
             tracks.extend(results['items'])
 
-        return [f"{', '.join([artist['name'] for artist in item['track']['artists']])} - {item['track']['name']}" 
+        return [f"{', '.join([artist['name'] for artist in item['track']['artists']])} - {item['track']['name']}"
                 for item in tracks]
     except Exception as e:
         st.session_state.log_messages.append(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
@@ -169,39 +174,40 @@ def get_available_services(driver):
             EC.presence_of_element_located((By.ID, "service"))
         )
         options = select_service.find_elements(By.TAG_NAME, "option")
-        return [{"index": i, "value": opt.get_attribute("value"), "text": opt.text} 
+        return [{"index": i, "value": opt.get_attribute("value"), "text": opt.text}
                 for i, opt in enumerate(options) if i > 0]
     except Exception as e:
         st.session_state.log_messages.append(f"Errore nel recupero dei servizi: {str(e)}")
         return []
 
-# Funzione per scaricare una singola traccia
+# Funzione per scaricare una singola traccia con ritardi e gestione degli errori
 def download_track(traccia, servizio_idx, formato_valore, qualita_valore):
     driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options())
+    log = []
+    downloaded_file = None
+    success = False
     try:
-        log = []
         artista_input, traccia_input = split_title(traccia)
         log.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
 
         driver.get("https://lucida.su")
-        time.sleep(random.uniform(2, 5))  # Aggiunto un piccolo ritardo
         log.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
+        time.sleep(random.uniform(2, 5)) # Ritardo iniziale
 
         # Compila il campo di ricerca
-        input_field = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "download")))
+        input_field = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.ID, "download")))
         input_field.clear()
         input_field.send_keys(traccia)
-        time.sleep(random.uniform(1, 3))  # Aggiunto un piccolo ritardo
+        time.sleep(random.uniform(1, 3))
         log.append("✍️ Campo input compilato")
 
         # Seleziona il servizio
-        select_service = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "service")))
+        select_service = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.ID, "service")))
         opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
         if servizio_idx >= len(opzioni_service):
             log.append(f"⚠️ Indice {servizio_idx} non valido per 'service'")
-            driver.quit()
             return False, None, log
-        
+
         servizio_valore = opzioni_service[servizio_idx].get_attribute("value")
         driver.execute_script("""
             var select = arguments[0];
@@ -215,43 +221,41 @@ def download_track(traccia, servizio_idx, formato_valore, qualita_valore):
             var svelteEvent = new CustomEvent('svelte-change', { bubbles: true });
             select.dispatchEvent(svelteEvent);
         """, select_service, servizio_valore)
-        time.sleep(random.uniform(2, 4))
         log.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
-        time.sleep(random.uniform(2, 5))
+        time.sleep(random.uniform(3, 7))
 
         # Seleziona il paese
         WebDriverWait(driver, 60).until(lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0)
         select_country = Select(driver.find_element(By.ID, "country"))
         if not select_country.options:
             log.append(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
-            driver.quit()
             return False, None, log
         select_country.select_by_index(0)
         log.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
-        time.sleep(random.uniform(1, 2))
+        time.sleep(random.uniform(1, 3))
 
         # Clicca "go"
-        go_button = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "go")))
+        go_button = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.ID, "go")))
         go_button.click()
-        time.sleep(random.uniform(2, 4))
         log.append("▶️ Pulsante 'go' cliccato")
-        time.sleep(random.uniform(3, 5))
+        time.sleep(random.uniform(5, 10))
 
         # Cerca i risultati
-        WebDriverWait(driver, 60).until(
+        WebDriverWait(driver, 90).until(
             lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
         )
         titoli = driver.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
         artisti = driver.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
         log.append(f"📋 Risultati trovati: {len(titoli)} titoli")
 
+        found_track = False
         for i, titolo in enumerate(titoli):
             titolo_testo = titolo.text.strip().lower()
             traccia_testo = traccia_input.lower()
             parole_traccia = set(traccia_testo.split())
             parole_titolo = set(titolo_testo.split())
             match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
-            
+
             log.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match:.2%})")
             if match >= 0.7 or traccia_testo in titolo_testo:
                 if artista_input and i < len(artisti):
@@ -260,67 +264,64 @@ def download_track(traccia, servizio_idx, formato_valore, qualita_valore):
                     if artista_normalizzato and artista_normalizzato not in artista_risultato and match < 0.9:
                         log.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
                         continue
-                
+
                 driver.execute_script("arguments[0].scrollIntoView(true);", titolo)
-                time.sleep(random.uniform(1,3))  # Aggiunto un piccolo ritardo
+                time.sleep(random.uniform(0.5, 2))
                 titolo.click()
                 log.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
+                found_track = True
                 break
-        else:
+        if not found_track:
             log.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
-            driver.quit()
             return False, None, log
 
-        time.sleep(random.uniform(3, 5))
+        time.sleep(random.uniform(5, 10))
 
         # Seleziona formato
-        select_convert = Select(WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
+        select_convert = Select(WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.ID, "convert"))))
         select_convert.select_by_value(formato_valore)
-        time.sleep(random.uniform(1, 3))
         log.append(f"🎧 Formato selezionato")
-        time.sleep(random.uniform(1, 2))
+        time.sleep(random.uniform(1, 3))
 
         # Seleziona qualità
-        select_downsetting = Select(WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
+        select_downsetting = Select(WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
         select_downsetting.select_by_value(qualita_valore)
-        time.sleep(random.uniform(1, 3))
         log.append(f"🔊 Qualità selezionata")
-        time.sleep(random.uniform(1, 2))
+        time.sleep(random.uniform(1, 3))
 
         # Avvia il download
         existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
-        download_button = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
+        download_button = WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
         driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
-        time.sleep(random.uniform(1, 3))
+        time.sleep(random.uniform(0.5, 2))
         download_button.click()
         log.append("⬇️ Pulsante di download cliccato")
 
         success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
         log.append(message)
-        driver.quit()
-        return success, downloaded_file, log
 
     except Exception as e:
-        log.append(f"❌ Errore durante il download: {str(e)}")
-        driver.quit()
-        return False, None, log
+        log.append(f"❌ Errore durante il download:{str(e)}")
+finally:
+driver.quit()
+return success, downloaded_file, log
 
-# Interfaccia Streamlit
+Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali (PIZZUNA)")
-st.write("Carica un file `tracce.txt` o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
+st.write("Carica un file tracce.txt o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
 
-# Carica i servizi disponibili
+Carica i servizi disponibili
 if not st.session_state.servizi_disponibili:
-    with st.spinner("Caricamento servizi disponibili..."):
-        driver_temp = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options())
-        st.session_state.servizi_disponibili = get_available_services(driver_temp)
-        driver_temp.quit()
-    if st.session_state.servizi_disponibili:
-        st.success(f"Caricati {len(st.session_state.servizi_disponibili)} servizi disponibili.")
-    else:
-        st.warning("Impossibile caricare i servizi disponibili.")
+with st.spinner("Caricamento servizi disponibili..."):
+driver_temp = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options())
+st.session_state.servizi_disponibili = get_available_services(driver_temp)
+driver_temp.quit()
+if st.session_state.servizi_disponibili:
+st.success(f"Caricati {len(st.session_state.servizi_disponibili)} servizi disponibili.")
+else:
+st.warning("Impossibile caricare i servizi disponibili.")
 
-# Preferenze di download
+Preferenze di download
 st.subheader("Preferenze di download")
 servizio_opzioni = {f"{s['text']} (Servizio {s['index']})": s['index'] for s in st.session_state.servizi_disponibili}
 servizio_selezionato = st.selectbox("Servizio preferito", options=list(servizio_opzioni.keys()), index=0)
@@ -328,101 +329,105 @@ servizio_indice = servizio_opzioni[servizio_selezionato]
 
 col1, col2 = st.columns(2)
 with col1:
-    formato_selezionato = st.selectbox("Formato audio", options=list(FORMATI_DISPONIBILI.values()), index=0)
-    formato_valore = list(FORMATI_DISPONIBILI.keys())[list(FORMATI_DISPONIBILI.values()).index(formato_selezionato)]
+formato_selezionato = st.selectbox("Formato audio", options=list(FORMATI_DISPONIBILI.values()), index=0)
+formato_valore = list(FORMATI_DISPONIBILI.keys())[list(FORMATI_DISPONIBILI.values()).index(formato_selezionato)]
 with col2:
-    qualita_selezionata = st.selectbox("Qualità audio", options=list(QUALITA_DISPONIBILI.values()), index=0)
-    qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
+qualita_selezionata = st.selectbox("Qualità audio", options=list(QUALITA_DISPONIBILI.values()), index=0)
+qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
 
-# Numero di thread
-num_threads = st.slider("Numero di download paralleli", min_value=1, max_value=5, value=2, help="Più thread possono velocizzare il processo, ma potrebbero sovraccaricare il sito o il sistema.")
+Numero di thread (ridotto per essere più "gentili")
+num_threads = st.slider("Numero di download paralleli", min_value=1, max_value=3, value=2, help="Un numero inferiore di thread riduce il rischio di essere bloccati dal sito.")
 
-# Playlist Spotify
+Playlist Spotify
 st.subheader("Genera tracce.txt da Spotify")
 playlist_link = st.text_input("Link della playlist Spotify")
 if playlist_link and st.button("Genera tracce.txt da Spotify"):
-    tracks = get_spotify_tracks(playlist_link)
-    if tracks:
-        temp_file_path = os.path.join(download_dir, "tracce.txt")
-        with open(temp_file_path, 'w', encoding='utf-8') as f:
-            for track in tracks:
-                f.write(track + '\n')
-        st.success(f"File `tracce.txt` generato con successo! Contiene {len(tracks)} tracce.")
-        st.session_state['spotify_file'] = temp_file_path
+tracks = get_spotify_tracks(playlist_link)
+if tracks:
+temp_file_path = os.path.join(download_dir, "tracce.txt")
+with open(temp_file_path, 'w', encoding='utf-8') as f:
+for track in tracks:
+f.write(track + '\n')
+st.success(f"File tracce.txt generato con successo! Contiene {len(tracks)} tracce.")
+st.session_state['spotify_file'] = temp_file_path
 
-# Upload file
+Upload file
 uploaded_file = st.file_uploader("Oppure carica il file tracce.txt", type=["txt"])
 
-# Processa le tracce
+Processa le tracce
 if 'spotify_file' in st.session_state and os.path.exists(st.session_state['spotify_file']):
-    tracce_source = st.session_state['spotify_file']
+tracce_source = st.session_state['spotify_file']
 elif uploaded_file is not None:
-    tracce_source = uploaded_file
+tracce_source = uploaded_file
 else:
-    tracce_source = None
+tracce_source = None
 
 if tracce_source:
-    if isinstance(tracce_source, str):
-        with open(tracce_source, 'r', encoding='utf-8') as f:
-            tracce = [line.strip() for line in f.readlines() if line.strip()]
-    else:
-        tracce = tracce_source.read().decode("utf-8").splitlines()
-        tracce = [traccia.strip() for traccia in tracce if traccia.strip()]
-    
-    tracce_totali = len(tracce)
-    st.write(f"**Numero totale di tracce da scaricare:** {tracce_totali}")
+if isinstance(tracce_source, str):
+with open(tracce_source, 'r', encoding='utf-8') as f:
+tracce = [line.strip() for line in f.readlines() if line.strip()]
+else:
+tracce = tracce_source.read().decode("utf-8").splitlines()
+tracce = [traccia.strip() for traccia in tracce if traccia.strip()]
 
-    if st.button("Avvia Download"):
-        st.session_state.downloaded_files = []
-        st.session_state.log_messages = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        log_container = st.empty()
+tracce_totali = len(tracce)
+st.write(f"**Numero totale di tracce da scaricare:** {tracce_totali}")
 
-        def update_progress(tracce_scaricate):
-            progress_bar.progress(tracce_scaricate / tracce_totali)
-            status_text.text(f"✅ {tracce_scaricate}/{tracce_totali} tracce scaricate")
+if st.button("Avvia Download"):
+    st.session_state.downloaded_files = []
+    st.session_state.log_messages = []
+    st.session_state.pending_tracks = [] # Reset pending tracks
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    log_container = st.empty()
 
-        # Esegui i download in parallelo
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-            future_to_track = {executor.submit(download_track, traccia, servizio_indice, formato_valore, qualita_valore): traccia 
-                               for traccia in tracce}
-            tracce_scaricate = 0
+    def update_progress(tracce_scaricate):
+        progress_bar.progress(tracce_scaricate / tracce_totali if tracce_totali > 0 else 0)
+        status_text.text(f"✅ {tracce_scaricate}/{tracce_totali} tracce scaricate")
 
-            for future in concurrent.futures.as_completed(future_to_track):
-                traccia = future_to_track[future]
-                success, downloaded_file, log = future.result()
-                st.session_state.log_messages.extend([f"### {traccia}"] + log)
-                
-                if success and downloaded_file:
-                    tracce_scaricate += 1
-                    st.session_state.downloaded_files.append(downloaded_file)
-                else:
-                    st.session_state.pending_tracks.append(traccia)
-                
-                update_progress(tracce_scaricate)
-                log_container.write("\n".join(st.session_state.log_messages[-10:]))  # Mostra gli ultimi 10 log
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = {executor.submit(download_track, traccia, servizio_indice, formato_valore, qualita_valore): traccia
+                   for traccia in tracce}
+        tracce_scaricate = 0
 
-        # Riepilogo
-        status_text.text(f"🏁 Completato! {tracce_scaricate}/{tracce_totali} tracce scaricate")
-        st.write("### Riepilogo")
-        st.write(f"**Numero totale di tracce:** {tracce_totali}")
-        st.write(f"**Numero di tracce scaricate con successo:** {tracce_scaricate}")
-        st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
+        for future in concurrent.futures.as_completed(futures):
+            traccia = futures[future]
+            success, downloaded_file, log = future.result()
+            st.session_state.log_messages.extend([f"### {traccia}"] + log)
 
-        if st.session_state.downloaded_files:
-            zip_path = create_zip_archive(download_dir, st.session_state.downloaded_files)
-            if zip_path and os.path.exists(zip_path):
-                with open(zip_path, "rb") as zip_file:
-                    st.download_button(
-                        label="📥 Scarica tutte le tracce (ZIP)",
-                        data=zip_file,
-                        file_name="tracce_scaricate.zip",
-                        mime="application/zip",
-                        key="download_zip"
-                    )
-                st.write(f"File inclusi nell'archivio: {[os.path.basename(f) for f in st.session_state.downloaded_files]}")
+            if success and downloaded_file:
+                tracce_scaricate += 1
+                st.session_state.downloaded_files.append(downloaded_file)
             else:
-                st.error("Errore: l'archivio ZIP non è stato creato.")
+                st.session_state.pending_tracks.append(traccia)
+
+            update_progress(tracce_scaricate)
+            log_container.write("\n".join(st.session_state.log_messages[-10:]))
+
+    # Riepilogo
+    status_text.text(f"🏁 Completato! {tracce_scaricate}/{tracce_totali} tracce scaricate")
+    st.write("### Riepilogo")
+    st.write(f"**Numero totale di tracce:** {tracce_totali}")
+    st.write(f"**Numero di tracce scaricate con successo:** {tracce_scaricate}")
+    st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
+    if st.session_state.pending_tracks:
+        st.write("**Elenco tracce non scaricate:**")
+        for track in st.session_state.pending_tracks:
+            st.write(f"- {track}")
+
+    if st.session_state.downloaded_files:
+        zip_path = create_zip_archive(download_dir, st.session_state.downloaded_files)
+        if zip_path and os.path.exists(zip_path):
+            with open(zip_path, "rb") as zip_file:
+                st.download_button(
+                    label="📥 Scarica tutte le tracce (ZIP)",
+                    data=zip_file,
+                    file_name="tracce_scaricate.zip",
+                    mime="application/zip",
+                    key="download_zip"
+                )
+            st.write(f"File inclusi nell'archivio: {[os.path.basename(f) for f in st.session_state.downloaded_files]}")
         else:
-            st.warning("Nessun file scaricato con successo.")
+            st.error("Errore: l'archivio ZIP non è stato creato.")
+    else:
+        st.warning("Nessun file scaricato con successo.")
