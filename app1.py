@@ -53,6 +53,8 @@ if 'download_progress' not in st.session_state:
     st.session_state.download_progress = {}
 if 'download_errors' not in st.session_state:
     st.session_state.download_errors = {}
+if 'servizi_disponibili' not in st.session_state:
+    st.session_state.servizi_disponibili = []
 
 
 # 6. Configurazione Selenium Avanzata
@@ -113,7 +115,15 @@ def get_chrome_options(use_proxy=False):
 
 # Funzione per creare una nuova istanza del browser
 def create_browser_instance(use_proxy=False):
-    return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options(use_proxy))
+    try:
+        return webdriver.Chrome(options=get_chrome_options(use_proxy))
+    except Exception as e:
+        st.error(f"Errore nella creazione del browser: {str(e)}")
+        try:
+            return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options(use_proxy))
+        except Exception as e2:
+            st.error(f"Secondo tentativo fallito: {str(e2)}")
+            raise
 
 # 3. Ottimizzazione Performance - Browser Pool
 def get_browser_from_pool(use_proxy=False):
@@ -123,11 +133,11 @@ def get_browser_from_pool(use_proxy=False):
 
 def return_browser_to_pool(browser):
     if browser:
-        st.session_state.browser_pool.append(browser)
-
-# Servizi disponibili
-if 'servizi_disponibili' not in st.session_state:
-    st.session_state.servizi_disponibili = []
+        try:
+            st.session_state.browser_pool.append(browser)
+        except Exception as e:
+            safe_browser_quit(browser)
+            st.error(f"Errore nel ritorno del browser al pool: {str(e)}")
 
 # Formati e qualità disponibili
 FORMATI_DISPONIBILI = {
@@ -225,14 +235,13 @@ def get_playlist_id(playlist_link):
         raise ValueError("Link della playlist non valido.")
 
 # 3. Ottimizzazione Performance - Cache delle Richieste Spotify & 2. Gestione degli Errori - Ritentativi
-@st.cache_data(ttl=86400)
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def _get_spotify_tracks(_sp, playlist_id):
+def _get_spotify_tracks(sp, playlist_id):
     tracks_data = []
-    results = _sp.playlist_tracks(playlist_id)
+    results = sp.playlist_tracks(playlist_id)
     tracks_data.extend(results['items'])
     while results['next']:
-        results = _sp.next(results)
+        results = sp.next(results)
         tracks_data.extend(results['items'])
     return tracks_data
 
@@ -241,9 +250,9 @@ def get_spotify_tracks(playlist_link):
         auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
         sp = spotipy.Spotify(auth_manager=auth_manager)
         playlist_id = get_playlist_id(playlist_link)
-        tracks_data = _get_spotify_tracks(sp, playlist_id) # Pass the 'sp' object
+        tracks_data = _get_spotify_tracks(sp, playlist_id)
         return [{"artist": ', '.join([artist['name'] for artist in item['track']['artists']]),
-                 "title": item['track']['name']} for item in tracks_data if item['track']]
+                "title": item['track']['name']} for item in tracks_data if item['track']]
     except Exception as e:
         st.session_state.log_messages.append(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
         return None
@@ -452,6 +461,20 @@ def manage_cache_size():
     # per cache più complesse si dovrebbe implementare una logica di rimozione (LRU, LFU, ecc.)
     pass
 
+# Miglioramento della gestione degli errori di Selenium
+def safe_browser_quit(browser):
+    if browser:
+        try:
+            browser.quit()
+        except Exception as e:
+            print(f"Errore durante la chiusura del browser: {e}")
+
+def cleanup_browser_pool():
+    if 'browser_pool' in st.session_state:
+        for browser in st.session_state.browser_pool:
+            safe_browser_quit(browser)
+        st.session_state.browser_pool = []
+
 # Funzione per chiudere correttamente tutti i browser nel pool
 def close_all_browsers():
     if 'browser_pool' in st.session_state:
@@ -464,7 +487,7 @@ def close_all_browsers():
 
 # Registra la funzione di pulizia da eseguire all'uscita
 import atexit
-atexit.register(close_all_browsers)
+atexit.register(cleanup_browser_pool)
 
 # Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali (PIZZUNA)")
@@ -601,20 +624,24 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
                     st.write(f"**{track_key}:**")
                     for error in errors:
                         st.write(f"- {error}")
+
 st.sidebar.subheader("Disclaimer")
 st.sidebar.info("""
 Questo strumento è fornito a scopo didattico e per uso personale.
 L'utente è responsabile del rispetto delle leggi sul copyright
 e dei termini di servizio delle piattaforme musicali.
 Il download di materiale protetto da copyright senza autorizzazione
-è illegale. Gli sviluppatori non si assumono alcuna responsabilitàper un uso improprio di questo strumento.
+è illegale. Gli sviluppatori non si assumono alcuna responsabilità
+per un uso improprio di questo strumento.
 """)
 
 # Pulizia della sessione (utile per test)
 if st.sidebar.button("Pulisci Sessione"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.rerun()# Ulteriore miglioramento usabilità: espansore per le impostazioni avanzate
+    st.rerun()
+
+# Ulteriore miglioramento usabilità: espansore per le impostazioni avanzate
 with st.sidebar.expander("Impostazioni Avanzate"):
     # Opzione per forzare il ricaricamento dei servizi
     if st.button("Ricarica Servizi"):
@@ -627,14 +654,12 @@ with st.sidebar.expander("Impostazioni Avanzate"):
         for log_message in st.session_state.get('log_messages', []):
             st.write(log_message)
 
-    # Ulteriori impostazioni avanzate potrebbero essere aggiunte qui
-    pass# Un piccolo easter egg (opzionale)
+# Un piccolo easter egg (opzionale)
 if st.sidebar.checkbox("Modalità Sorpresa?"):
     st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)") # Sostituisci con un link a un'immagine
-    st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")# Funzionalità futura (non implementata): Coda di download prioritaria
-# st.sidebar.subheader("Coda di Download Prioritaria (Futuro)")
-# priority_tracks = st.sidebar.text_area("Inserisci tracce prioritarie (una per riga)")
-# # Logica per gestire la coda prioritaria andrebbe implementata nel loop di download# Ulteriore feedback visivo durante il download
+    st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
+
+# Ulteriore feedback visivo durante il download
 if 'download_progress' in st.session_state and st.session_state.download_progress:
     st.subheader("Stato Download Dettagliato")
     for track, status in st.session_state.download_progress.items():
@@ -645,9 +670,13 @@ if 'download_progress' in st.session_state and st.session_state.download_progres
         elif "❌ Errore" in status:
             st.error(f"{track}: {status}")
         else:
-            st.write(f"{track}: {status}")# Messaggio finale per indicare che non ci sono ulteriori implementazioni immediate
+            st.write(f"{track}: {status}")
+
+# Messaggio finale per indicare che non ci sono ulteriori implementazioni immediate
 st.markdown("---")
-st.info("L'applicazione è stata potenziata con diverse ottimizzazioni e nuove funzionalità. Ulteriori miglioramenti potrebbero essere implementati in futuro.")# Funzionalità per scaricare un singolo file ZIP contenente tutte le tracce scaricate
+st.info("L'applicazione è stata potenziata con diverse ottimizzazioni e nuove funzionalità. Ulteriori miglioramenti potrebbero essere implementati in futuro.")
+
+# Funzionalità per scaricare un singolo file ZIP contenente tutte le tracce scaricate
 if st.session_state.get('downloaded_files'):
     st.subheader("Scarica le tracce")
     zip_filename = "tracce_scaricate.zip"
@@ -667,22 +696,7 @@ if st.session_state.get('downloaded_files'):
 elif st.session_state.get('download_started', False) and not st.session_state.get('downloaded_files'):
     st.info("Download in corso... Attendi il completamento per scaricare le tracce.")
 elif not tracks_to_download:
-    st.info("Inserisci un link Spotify o carica un file di testo per avviare il download.")# Funzionalità futura (non implementata): Visualizzazione della copertina dell'album (se disponibile)
-# st.subheader("Copertina Album (Futuro)")
-# if 'some_track_with_album_info' in st.session_state:
-#     album_cover_url = st.session_state['some_track_with_album_info'].get('album', {}).get('images', [{}])[0].get('url')
-#     if album_cover_url:
-#         st.image(album_cover_url, caption="Copertina Album")
-#     else:
-#         st.info("Copertina dell'album non disponibile.")
-
-# Ulteriore miglioramento usabilità: Opzione per rinominare i file scaricati
-# with st.sidebar.expander("Opzioni di Rinominazione (Futuro)"):
-#     rename_option = st.checkbox("Rinomina automaticamente i file scaricati", False)
-#     if rename_option:
-#         renaming_pattern = st.text_input("Pattern di rinominazione (es. %artist% - %title%.%ext%)", "%artist% - %title%.%ext%")
-#         st.info("Variabili disponibili: %artist%, %title%, %ext%")
-#         # La logica di rinominazione andrebbe implementata nella funzione di download
+    st.info("Inserisci un link Spotify o carica un file di testo per avviare il download.")
 
 # Feedback aggiuntivo sull'utilizzo dei proxy
 if use_proxy and not PROXY_LIST:
@@ -692,52 +706,13 @@ elif use_proxy and PROXY_LIST:
 elif not use_proxy:
     st.sidebar.info("Non stai utilizzando un proxy.")
 
-# Chiusura esplicita del pool di browser quando l'app Streamlit si chiude (tentativo)
-# Questo potrebbe non essere sempre affidabile a causa del ciclo di vita di Streamlit
+# Chiusura esplicita del pool di browser quando l'app Streamlit si chiude
 import atexit
 
-def close_browser_pool():
-    if 'browser_pool' in st.session_state:
-        print("Chiusura del pool di browser...")
-        for browser in st.session_state.browser_pool:
-            try:
-                browser.quit()
-                print("Browser chiuso.")
-            except Exception as e:
-                print(f"Errore durante la chiusura del browser: {e}")
-        st.session_state.browser_pool = []
-
-atexit.register(close_browser_pool)
+atexit.register(close_all_browsers)
 
 st.markdown("---")
-st.info("Grazie per aver utilizzato il Downloader di Tracce Musicali (PIZZUNA)!")# Possibile funzionalità futura: Supporto per altri servizi musicali
-# st.sidebar.subheader("Supporto Altri Servizi (Futuro)")
-# other_service_url = st.sidebar.text_input("URL del brano/playlist da altro servizio")
-# if other_service_url and st.sidebar.button("Analizza URL"):
-#     # Logica per identificare il servizio e scaricare la traccia
-#     st.info(f"Analisi URL: {other_service_url} (Funzionalità non ancora implementata)")
-
-# Miglioramento della gestione degli errori di Selenium
-def safe_browser_quit(browser):
-    if browser:
-        try:
-            browser.quit()
-        except Exception as e:
-            print(f"Errore durante la chiusura del browser: {e}")
-
-def cleanup_browser_pool():
-    if 'browser_pool' in st.session_state:
-        print("Pulizia del pool di browser...")
-        for browser in st.session_state.browser_pool:
-            safe_browser_quit(browser)
-        st.session_state.browser_pool = []
-
-# Tentativo di pulizia del pool all'uscita dell'app (potrebbe non essere sempre garantito)
-atexit.register(cleanup_browser_pool)
-
-# Ulteriore feedback visivo se non ci sono tracce da scaricare
-if tracks_to_download == [] and 'spotify_tracks' in st.session_state and not st.session_state['spotify_tracks'] and uploaded_file is None and not st.session_state.get('download_started', False):
-    st.warning("Nessuna traccia selezionata per il download. Inserisci un link Spotify o carica un file di testo.")
+st.info("Grazie per aver utilizzato il Downloader di Tracce Musicali (PIZZUNA)!")
 
 st.markdown("---")
 st.markdown("Sviluppato con ❤️ da un appassionato di musica.")
