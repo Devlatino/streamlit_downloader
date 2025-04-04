@@ -547,7 +547,7 @@ if tracks_to_download:
         for track_key, status in st.session_state.download_progress.items():
             st.write(f"- {track_key}: {status}")
 
-st.write("### Riepilogo Download")
+       st.write("### Riepilogo Download")
         st.write(f"**Totale tracce:** {num_tracks}")
         st.write(f"**Scaricate con successo:** {downloaded_count}")
         st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
