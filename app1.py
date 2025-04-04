@@ -546,13 +546,17 @@ if 'downloaded_files' in st.session_state and st.session_state.downloaded_files 
     st.balloons()
     st.success(f"🎉 Download completato! {len(st.session_state.downloaded_files)} tracce scaricate con successo.")
     st.session_state['download_started'] = False
-
+    
+st.write(f"Tracks to download: {tracks_to_download}")
 if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
     st.session_state['download_started'] = True
     st.session_state.downloaded_files = []
     st.session_state.log_messages = []
     st.session_state.pending_tracks = []
-    st.session_state.download_progress = {f"{t['artist']} - {t['title']}": "In attesa..." for t in tracks_to_download}
+    if 'download_progress' not in st.session_state:
+        st.session_state.download_progress = {f"{t['artist']} - {t['title']}": "In attesa..." for t in tracks_to_download}
+    else:
+        st.session_state.download_progress = {f"{t['artist']} - {t['title']}": "In attesa..." for t in tracks_to_download}
     st.session_state.download_errors = {}
     progress_bar = st.progress(0)
     num_tracks = len(tracks_to_download)
