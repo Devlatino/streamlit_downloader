@@ -550,18 +550,17 @@ if tracks_to_download:
         st.write("### Riepilogo Download")
         st.write(f"**Totale tracce:** {num_tracks}")
         st.write(f"**Scaricate con successo:** {downloaded_count}")
-st.write(f"Tracce non scaricate: {len(st.session_state.pending_tracks)}")
-if st.session_state.pending_tracks:
-st.write("Elenco tracce non scaricate:")
-for track_key in st.session_state.pending_tracks:
-st.write(f"- {track_key}")
-if st.session_state.download_errors:
-with st.expander("Dettagli errori download"):
-for track_key, errors in st.session_state.download_errors.items():
-st.write(f"{track_key}:")
-for error in errors:
-st.write(f"- {error}")
-
+   st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
+        if st.session_state.pending_tracks:
+            st.write("**Elenco tracce non scaricate:**")
+            for track_key in st.session_state.pending_tracks:
+                st.write(f"- {track_key}")
+            if st.session_state.download_errors:
+                with st.expander("Dettagli errori download"):
+                    for track_key, errors in st.session_state.download_errors.items():
+                        st.write(f"**{track_key}:**")
+                        for error in errors:
+                            st.write(f"- {error}")
 #Pulizia iniziale del pool di browser all'avvio (se presente)
 if st.session_state.browser_pool:
 for browser in st.session_state.browser_pool:
