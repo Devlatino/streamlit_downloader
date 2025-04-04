@@ -181,6 +181,7 @@ def get_available_services(driver):
         return []
 
 # Funzione per scaricare una singola traccia con ritardi e gestione degli errori
+# Funzione per scaricare una singola traccia con ritardi e gestione degli errori
 def download_track(traccia, servizio_idx, formato_valore, qualita_valore):
     driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options())
     log = []
@@ -274,6 +275,37 @@ def download_track(traccia, servizio_idx, formato_valore, qualita_valore):
         if not found_track:
             log.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
             return False, None, log
+
+        time.sleep(random.uniform(5, 10))
+
+        # Seleziona formato
+        select_convert = Select(WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.ID, "convert"))))
+        select_convert.select_by_value(formato_valore)
+        log.append(f"🎧 Formato selezionato")
+        time.sleep(random.uniform(1, 3))
+
+        # Seleziona qualità
+        select_downsetting = Select(WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
+        select_downsetting.select_by_value(qualita_valore)
+        log.append(f"🔊 Qualità selezionata")
+        time.sleep(random.uniform(1, 3))
+
+        # Avvia il download
+        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
+        download_button = WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
+        driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
+        time.sleep(random.uniform(0.5, 2))
+        download_button.click()
+        log.append("⬇️ Pulsante di download cliccato")
+
+        success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
+        log.append(message)
+
+    except Exception as e:
+        log.append(f"❌ Errore durante il download: {str(e)}")
+    finally:
+        driver.quit()
+        return success, downloaded_file, log
 
         time.sleep(random.uniform(5, 10))
 
