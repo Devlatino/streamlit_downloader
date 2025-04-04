@@ -181,7 +181,6 @@ def get_available_services(driver):
         return []
 
 # Funzione per scaricare una singola traccia con ritardi e gestione degli errori
-# Funzione per scaricare una singola traccia con ritardi e gestione degli errori
 def download_track(traccia, servizio_idx, formato_valore, qualita_valore):
     driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options())
     log = []
@@ -302,58 +301,27 @@ def download_track(traccia, servizio_idx, formato_valore, qualita_valore):
         log.append(message)
 
     except Exception as e:
-        log.append(f"❌ Errore durante il download: {str(e)}")
+        log.append(f"❌ Errore durante il download:{str(e)}")
     finally:
         driver.quit()
         return success, downloaded_file, log
 
-        time.sleep(random.uniform(5, 10))
-
-        # Seleziona formato
-        select_convert = Select(WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.ID, "convert"))))
-        select_convert.select_by_value(formato_valore)
-        log.append(f"🎧 Formato selezionato")
-        time.sleep(random.uniform(1, 3))
-
-        # Seleziona qualità
-        select_downsetting = Select(WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
-        select_downsetting.select_by_value(qualita_valore)
-        log.append(f"🔊 Qualità selezionata")
-        time.sleep(random.uniform(1, 3))
-
-        # Avvia il download
-        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
-        download_button = WebDriverWait(driver, 45).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
-        driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
-        time.sleep(random.uniform(0.5, 2))
-        download_button.click()
-        log.append("⬇️ Pulsante di download cliccato")
-
-        success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
-        log.append(message)
-
-    except Exception as e:
-        log.append(f"❌ Errore durante il download:{str(e)}")
-finally:
-driver.quit()
-return success, downloaded_file, log
-
-Interfaccia Streamlit
+# Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali (PIZZUNA)")
-st.write("Carica un file tracce.txt o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
+st.write("Carica un file `tracce.txt` o inserisci un link a una playlist Spotify per scaricare le tue tracce preferite.")
 
-Carica i servizi disponibili
+# Carica i servizi disponibili
 if not st.session_state.servizi_disponibili:
-with st.spinner("Caricamento servizi disponibili..."):
-driver_temp = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options())
-st.session_state.servizi_disponibili = get_available_services(driver_temp)
-driver_temp.quit()
-if st.session_state.servizi_disponibili:
-st.success(f"Caricati {len(st.session_state.servizi_disponibili)} servizi disponibili.")
-else:
-st.warning("Impossibile caricare i servizi disponibili.")
+    with st.spinner("Caricamento servizi disponibili..."):
+        driver_temp = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options())
+        st.session_state.servizi_disponibili = get_available_services(driver_temp)
+        driver_temp.quit()
+    if st.session_state.servizi_disponibili:
+        st.success(f"Caricati {len(st.session_state.servizi_disponibili)} servizi disponibili.")
+    else:
+        st.warning("Impossibile caricare i servizi disponibili.")
 
-Preferenze di download
+# Preferenze di download
 st.subheader("Preferenze di download")
 servizio_opzioni = {f"{s['text']} (Servizio {s['index']})": s['index'] for s in st.session_state.servizi_disponibili}
 servizio_selezionato = st.selectbox("Servizio preferito", options=list(servizio_opzioni.keys()), index=0)
@@ -361,105 +329,105 @@ servizio_indice = servizio_opzioni[servizio_selezionato]
 
 col1, col2 = st.columns(2)
 with col1:
-formato_selezionato = st.selectbox("Formato audio", options=list(FORMATI_DISPONIBILI.values()), index=0)
-formato_valore = list(FORMATI_DISPONIBILI.keys())[list(FORMATI_DISPONIBILI.values()).index(formato_selezionato)]
+    formato_selezionato = st.selectbox("Formato audio", options=list(FORMATI_DISPONIBILI.values()), index=0)
+    formato_valore = list(FORMATI_DISPONIBILI.keys())[list(FORMATI_DISPONIBILI.values()).index(formato_selezionato)]
 with col2:
-qualita_selezionata = st.selectbox("Qualità audio", options=list(QUALITA_DISPONIBILI.values()), index=0)
-qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
+    qualita_selezionata = st.selectbox("Qualità audio", options=list(QUALITA_DISPONIBILI.values()), index=0)
+    qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
 
-Numero di thread (ridotto per essere più "gentili")
+# Numero di thread (ridotto per essere più "gentili")
 num_threads = st.slider("Numero di download paralleli", min_value=1, max_value=3, value=2, help="Un numero inferiore di thread riduce il rischio di essere bloccati dal sito.")
 
-Playlist Spotify
+# Playlist Spotify
 st.subheader("Genera tracce.txt da Spotify")
 playlist_link = st.text_input("Link della playlist Spotify")
 if playlist_link and st.button("Genera tracce.txt da Spotify"):
-tracks = get_spotify_tracks(playlist_link)
-if tracks:
-temp_file_path = os.path.join(download_dir, "tracce.txt")
-with open(temp_file_path, 'w', encoding='utf-8') as f:
-for track in tracks:
-f.write(track + '\n')
-st.success(f"File tracce.txt generato con successo! Contiene {len(tracks)} tracce.")
-st.session_state['spotify_file'] = temp_file_path
+    tracks = get_spotify_tracks(playlist_link)
+    if tracks:
+        temp_file_path = os.path.join(download_dir, "tracce.txt")
+        with open(temp_file_path, 'w', encoding='utf-8') as f:
+            for track in tracks:
+                f.write(track + '\n')
+        st.success(f"File `tracce.txt` generato con successo! Contiene {len(tracks)} tracce.")
+        st.session_state['spotify_file'] = temp_file_path
 
-Upload file
+# Upload file
 uploaded_file = st.file_uploader("Oppure carica il file tracce.txt", type=["txt"])
 
-Processa le tracce
+# Processa le tracce
 if 'spotify_file' in st.session_state and os.path.exists(st.session_state['spotify_file']):
-tracce_source = st.session_state['spotify_file']
+    tracce_source = st.session_state['spotify_file']
 elif uploaded_file is not None:
-tracce_source = uploaded_file
+    tracce_source = uploaded_file
 else:
-tracce_source = None
+    tracce_source = None
 
 if tracce_source:
-if isinstance(tracce_source, str):
-with open(tracce_source, 'r', encoding='utf-8') as f:
-tracce = [line.strip() for line in f.readlines() if line.strip()]
-else:
-tracce = tracce_source.read().decode("utf-8").splitlines()
-tracce = [traccia.strip() for traccia in tracce if traccia.strip()]
-
-tracce_totali = len(tracce)
-st.write(f"**Numero totale di tracce da scaricare:** {tracce_totali}")
-
-if st.button("Avvia Download"):
-    st.session_state.downloaded_files = []
-    st.session_state.log_messages = []
-    st.session_state.pending_tracks = [] # Reset pending tracks
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    log_container = st.empty()
-
-    def update_progress(tracce_scaricate):
-        progress_bar.progress(tracce_scaricate / tracce_totali if tracce_totali > 0 else 0)
-        status_text.text(f"✅ {tracce_scaricate}/{tracce_totali} tracce scaricate")
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = {executor.submit(download_track, traccia, servizio_indice, formato_valore, qualita_valore): traccia
-                   for traccia in tracce}
-        tracce_scaricate = 0
-
-        for future in concurrent.futures.as_completed(futures):
-            traccia = futures[future]
-            success, downloaded_file, log = future.result()
-            st.session_state.log_messages.extend([f"### {traccia}"] + log)
-
-            if success and downloaded_file:
-                tracce_scaricate += 1
-                st.session_state.downloaded_files.append(downloaded_file)
-            else:
-                st.session_state.pending_tracks.append(traccia)
-
-            update_progress(tracce_scaricate)
-            log_container.write("\n".join(st.session_state.log_messages[-10:]))
-
-    # Riepilogo
-    status_text.text(f"🏁 Completato! {tracce_scaricate}/{tracce_totali} tracce scaricate")
-    st.write("### Riepilogo")
-    st.write(f"**Numero totale di tracce:** {tracce_totali}")
-    st.write(f"**Numero di tracce scaricate con successo:** {tracce_scaricate}")
-    st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
-    if st.session_state.pending_tracks:
-        st.write("**Elenco tracce non scaricate:**")
-        for track in st.session_state.pending_tracks:
-            st.write(f"- {track}")
-
-    if st.session_state.downloaded_files:
-        zip_path = create_zip_archive(download_dir, st.session_state.downloaded_files)
-        if zip_path and os.path.exists(zip_path):
-            with open(zip_path, "rb") as zip_file:
-                st.download_button(
-                    label="📥 Scarica tutte le tracce (ZIP)",
-                    data=zip_file,
-                    file_name="tracce_scaricate.zip",
-                    mime="application/zip",
-                    key="download_zip"
-                )
-            st.write(f"File inclusi nell'archivio: {[os.path.basename(f) for f in st.session_state.downloaded_files]}")
-        else:
-            st.error("Errore: l'archivio ZIP non è stato creato.")
+    if isinstance(tracce_source, str):
+        with open(tracce_source, 'r', encoding='utf-8') as f:
+            tracce = [line.strip() for line in f.readlines() if line.strip()]
     else:
-        st.warning("Nessun file scaricato con successo.")
+        tracce = tracce_source.read().decode("utf-8").splitlines()
+        tracce = [traccia.strip() for traccia in tracce if traccia.strip()]
+
+    tracce_totali = len(tracce)
+    st.write(f"**Numero totale di tracce da scaricare:** {tracce_totali}")
+
+    if st.button("Avvia Download"):
+        st.session_state.downloaded_files = []
+        st.session_state.log_messages = []
+        st.session_state.pending_tracks = [] # Reset pending tracks
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        log_container = st.empty()
+
+        def update_progress(tracce_scaricate):
+            progress_bar.progress(tracce_scaricate / tracce_totali if tracce_totali > 0 else 0)
+            status_text.text(f"✅ {tracce_scaricate}/{tracce_totali} tracce scaricate")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(download_track, traccia, servizio_indice, formato_valore, qualita_valore): traccia
+                       for traccia in tracce}
+            tracce_scaricate = 0
+
+            for future in concurrent.futures.as_completed(futures):
+                traccia = futures[future]
+                success, downloaded_file, log = future.result()
+                st.session_state.log_messages.extend([f"### {traccia}"] + log)
+
+                if success and downloaded_file:
+                    tracce_scaricate += 1
+                    st.session_state.downloaded_files.append(downloaded_file)
+                else:
+                    st.session_state.pending_tracks.append(traccia)
+
+                update_progress(tracce_scaricate)
+                log_container.write("\n".join(st.session_state.log_messages[-10:]))
+
+        # Riepilogo
+        status_text.text(f"🏁 Completato! {tracce_scaricate}/{tracce_totali} tracce scaricate")
+        st.write("### Riepilogo")
+        st.write(f"**Numero totale di tracce:** {tracce_totali}")
+        st.write(f"**Numero di tracce scaricate con successo:** {tracce_scaricate}")
+        st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
+        if st.session_state.pending_tracks:
+            st.write("**Elenco tracce non scaricate:**")
+            for track in st.session_state.pending_tracks:
+                st.write(f"- {track}")
+
+        if st.session_state.downloaded_files:
+            zip_path = create_zip_archive(download_dir, st.session_state.downloaded_files)
+            if zip_path and os.path.exists(zip_path):
+                with open(zip_path, "rb") as zip_file:
+                    st.download_button(
+                        label="📥 Scarica tutte le tracce (ZIP)",
+                        data=zip_file,
+                        file_name="tracce_scaricate.zip",
+                        mime="application/zip",
+                        key="download_zip"
+                    )
+                st.write(f"File inclusi nell'archivio: {[os.path.basename(f) for f in st.session_state.downloaded_files]}")
+            else:
+                st.error("Errore: l'archivio ZIP non è stato creato.")
+        else:
+            st.warning("Nessun file scaricato con successo.")
