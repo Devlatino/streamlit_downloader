@@ -224,12 +224,12 @@ def get_playlist_id(playlist_link):
 # 3. Ottimizzazione Performance - Cache delle Richieste Spotify & 2. Gestione degli Errori - Ritentativi
 @st.cache_data(ttl=86400)
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def _get_spotify_tracks(sp, playlist_id):
+def _get_spotify_tracks(_sp, playlist_id):
     tracks_data = []
-    results = sp.playlist_tracks(playlist_id)
+    results = _sp.playlist_tracks(playlist_id)
     tracks_data.extend(results['items'])
     while results['next']:
-        results = sp.next(results)
+        results = _sp.next(results)
         tracks_data.extend(results['items'])
     return tracks_data
 
@@ -238,7 +238,7 @@ def get_spotify_tracks(playlist_link):
         auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
         sp = spotipy.Spotify(auth_manager=auth_manager)
         playlist_id = get_playlist_id(playlist_link)
-        tracks_data = _get_spotify_tracks(sp, playlist_id)
+        tracks_data = _get_spotify_tracks(sp, playlist_id) # Pass the 'sp' object
         return [{"artist": ', '.join([artist['name'] for artist in item['track']['artists']]),
                  "title": item['track']['name']} for item in tracks_data if item['track']]
     except Exception as e:
