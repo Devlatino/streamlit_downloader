@@ -54,27 +54,7 @@ if not CLIENT_ID or not CLIENT_SECRET:
     st.error("Le credenziali Spotify non sono state configurate in Streamlit Secrets.")
     st.stop()
 
-# Inizializza lo stato della sessione
-if 'downloaded_files' not in st.session_state:
-    st.session_state.downloaded_files = []
-if 'pending_tracks' not in st.session_state:
-    st.session_state.pending_tracks = []
-if 'log_messages' not in st.session_state:
-    st.session_state.log_messages = []
-if 'spotify_tracks_cache' not in st.session_state:
-    st.session_state.spotify_tracks_cache = {}
-if 'last_cache_update' not in st.session_state:
-    st.session_state.last_cache_update = {}
-if 'browser_pool' not in st.session_state:
-    st.session_state.browser_pool = []
-if 'user_agent_index' not in st.session_state:
-    st.session_state.user_agent_index = 0
-if 'proxy_index' not in st.session_state:
-    st.session_state.proxy_index = 0
-if 'download_progress' not in st.session_state:
-    st.session_state.download_progress = {}
-if 'download_errors' not in st.session_state:
-    st.session_state.download_errors = {}
+
 
 # 6. Configurazione Selenium Avanzata
 USER_AGENTS = [
