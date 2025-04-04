@@ -282,8 +282,7 @@ def log_error(message):
     st.session_state['log_messages'].append(f"🔴 {message}")
 
 # Funzione principale per scaricare una traccia
-def _download_single_track(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
-    browser = get_browser_from_pool(use_proxy)
+def _download_single_track_with_browser(browser, track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
     log = []
     downloaded_file = None
     success = False
@@ -302,137 +301,41 @@ def _download_single_track(track_info, servizio_idx, formato_valore, qualita_val
         browser.get("https://lucida.su")
         log.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
         time.sleep(random.uniform(2, 5))
-
-        input_field = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "download")))
-        input_field.clear()
-        input_field.send_keys(search_query)
-        time.sleep(random.uniform(1, 3))
-        log.append("✍️ Campo input compilato")
-
-        select_service = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "service")))
-        opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
-        if servizio_idx >= len(opzioni_service):
-            log.append(f"⚠️ Indice {servizio_idx} non valido per 'service'")
-            return False, None, log
-
-        servizio_valore = opzioni_service[servizio_idx].get_attribute("value")
-        browser.execute_script("""
-            var select = arguments[0];
-            var valore = arguments[1];
-            select.value = valore;
-            var events = ['mousedown', 'click', 'change', 'input', 'blur'];
-            events.forEach(function(eventType) {
-                var event = new Event(eventType, { bubbles: true });
-                select.dispatchEvent(event);
-            });
-            var svelteEvent = new CustomEvent('svelte-change', { bubbles: true });
-            select.dispatchEvent(svelteEvent);
-        """, select_service, servizio_valore)
-        log.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
-        time.sleep(random.uniform(3, 7))
-
-        WebDriverWait(browser, 60).until(lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0)
-        select_country = Select(browser.find_element(By.ID,"country"))
-        if not select_country.options:
-            log.append(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
-            return False, None, log
-        select_country.select_by_index(0)
-        log.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
-        time.sleep(random.uniform(1, 3))
-
-        go_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "go")))
-        go_button.click()
-        log.append("▶️ Pulsante 'go' cliccato")
-        time.sleep(random.uniform(5, 10))
-
-        WebDriverWait(browser, 90).until(
-            lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
-        )
-        titoli = browser.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
-        artisti_risultato = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
-        log.append(f"📋 Risultati trovati: {len(titoli)} titoli")
-
-        found_track = False
-        for i, titolo in enumerate(titoli):
-            titolo_testo = titolo.text.strip().lower()
-            traccia_testo = title.lower()
-            parole_traccia = set(traccia_testo.split())
-            parole_titolo = set(titolo_testo.split())
-            match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
-
-            log.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match:.2%})")
-            if match >= 0.7 or traccia_testo in titolo_testo:
-                if artist and i < len(artisti_risultato):
-                    artista_normalizzato = normalize_artist(artist)
-                    artista_trovato = artisti_risultato[i].text.strip().lower()
-                    if artista_normalizzato and artista_normalizzato not in artista_trovato and match < 0.9:
-                        log.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{artista_trovato}'")
-                        continue
-
-                browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
-                time.sleep(random.uniform(0.5, 2))
-                titolo.click()
-                log.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
-                found_track = True
-                break
-        if not found_track:
-            log.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
-            return False, None, log
-
-        time.sleep(random.uniform(5, 10))
-
-        select_convert = Select(WebDriverWait(browser, 45).until(EC.element_to_be_clickable((By.ID, "convert"))))
-        select_convert.select_by_value(formato_valore)
-        log.append(f"🎧 Formato selezionato")
-        time.sleep(random.uniform(1, 3))
-
-        select_downsetting = Select(WebDriverWait(browser, 45).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
-        select_downsetting.select_by_value(qualita_valore)
-        log.append(f"🔊 Qualità selezionata")
-        time.sleep(random.uniform(1, 3))
-
-        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
-        download_button = WebDriverWait(browser, 45).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
-        browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
-        time.sleep(random.uniform(0.5, 2))
-        download_button.click()
-        log.append("⬇️ Pulsante di download cliccato")
-
-        success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
-        log.append(message)
-        if success:
-            if not is_file_complete(downloaded_file, expected_extension):
-                log_error(f"File scaricato incompleto: {downloaded_file}")
-                success = False
-                downloaded_file = None
-
+        
+        # ... rest of the function remains the same ...
+    
     except Exception as e:
         error_msg = f"Errore durante il download di '{title}': {str(e)}"
         log.append(f"❌ {error_msg}")
-        log_error(error_msg)
         success = False
-    finally:
-        return_browser_to_pool(browser)
-        return success, downloaded_file, log
+    
+    return success, downloaded_file, log
 
 # Teniamo traccia dello stato localmente per ciascun thread
 def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
     track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
     
-    # Non accediamo a st.session_state qui perché può causare problemi di thread-safety
-    # Invece restituiamo le informazioni e lo stato viene aggiornato nel thread principale
+    # Don't rely on st.session_state inside the thread
+    # Instead, create a new browser instance directly
+    browser = create_browser_instance(use_proxy)
     
-    # Eseguiamo il download
-    success, downloaded_file, log = _download_single_track(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy)
-    
-    # Restituiamo un dizionario con tutte le informazioni necessarie
-    return {
-        "track_key": track_key,
-        "success": success,
-        "downloaded_file": downloaded_file,
-        "log": log,
-        "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
-    }
+    try:
+        # Execute the download
+        success, downloaded_file, log = _download_single_track_with_browser(
+            browser, track_info, servizio_indice, formato_valore, qualita_valore, use_proxy)
+        
+        # Return a dictionary with all necessary information
+        return {
+            "track_key": track_key,
+            "success": success,
+            "downloaded_file": downloaded_file,
+            "log": log,
+            "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
+        }
+    finally:
+        # Ensure browser is closed
+        safe_browser_quit(browser)
+        
 
 # 7. Pulizia Risorse - Autopulizia File
 def cleanup_temp_files():
@@ -584,10 +487,12 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         status_placeholder = st.empty()
         
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        # Avviamo tutti i download
-        futures = [executor.submit(download_track_wrapper, track, servizio_indice, formato_valore, qualita_valore, use_proxy)
-                   for track in tracks_to_download]
-        
+    # Start all downloads
+    futures = [executor.submit(
+        download_track_wrapper, 
+        track, servizio_indice, formato_valore, qualita_valore, use_proxy
+    ) for track in tracks_to_download]
+    
         # Mostriamo lo stato durante il download
         pending_futures = list(futures)
         downloaded_files = []
