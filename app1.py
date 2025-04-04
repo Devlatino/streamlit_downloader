@@ -354,7 +354,11 @@ def log_error(message):
 # Funzione principale per scaricare una traccia
 def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
     """Self-contained function that doesn't rely on session state"""
+    # Create track_key correctly from track_info
+    track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
     browser = None
+    log_messages = []
+    
     try:
         # Create browser options without using session state
         options = webdriver.ChromeOptions()
@@ -374,13 +378,60 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         # Create a separate browser instance for this thread
         browser = webdriver.Chrome(options=options)
         
-        # Rest of your download logic
-        # [...]
+        # Navigate to the website
+        log_messages.append(f"Navigazione al sito per {track_key}...")
+        browser.get("https://lucida.su")
+        time.sleep(3)
         
-        return {"success": True, "downloaded_file": path_to_downloaded_file, "log": log_messages}
+        # Fill in the form
+        WebDriverWait(browser, 20).until(
+            EC.presence_of_element_located((By.ID, "service"))
+        )
+        Select(browser.find_element(By.ID, "service")).select_by_index(servizio_idx)
+        time.sleep(1)
+        
+        if track_info.get('artist'):
+            artist_input = browser.find_element(By.ID, "artist")
+            artist_input.clear()
+            artist_input.send_keys(track_info['artist'])
+        
+        title_input = browser.find_element(By.ID, "title")
+        title_input.clear()
+        title_input.send_keys(track_info['title'])
+        
+        Select(browser.find_element(By.ID, "format")).select_by_value(formato_valore)
+        Select(browser.find_element(By.ID, "quality")).select_by_value(qualita_valore)
+        
+        # Get existing files before download
+        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
+        
+        # Submit the form
+        log_messages.append(f"Avvio download per {track_key}...")
+        browser.find_element(By.NAME, "submit").click()
+        
+        # Wait for download completion
+        expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
+        success, message, path_to_downloaded_file = wait_for_download(download_dir, existing_files, expected_extension)
+        log_messages.append(message)
+        
+        return {
+            "track_key": track_key,
+            "success": success,
+            "downloaded_file": path_to_downloaded_file,
+            "log": log_messages,
+            "status": "✅ Scaricato" if success and path_to_downloaded_file else f"❌ Errore: {message}"
+        }
         
     except Exception as e:
-        return {"success": False, "downloaded_file": None, "log": [f"Error: {str(e)}"]}
+        error_message = f"Errore durante il download di {track_key}: {str(e)}"
+        log_messages.append(error_message)
+        return {
+            "track_key": track_key,
+            "success": False, 
+            "downloaded_file": None, 
+            "log": log_messages,
+            "status": f"❌ Errore: {str(e)}"
+        }
         
     finally:
         if browser:
