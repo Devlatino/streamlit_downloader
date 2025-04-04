@@ -381,33 +381,133 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         # Navigate to the website
         log_messages.append(f"Navigazione al sito per {track_key}...")
         browser.get("https://lucida.su")
-        time.sleep(3)
         
-        # Fill in the form
-        WebDriverWait(browser, 20).until(
-            EC.presence_of_element_located((By.ID, "service"))
-        )
-        Select(browser.find_element(By.ID, "service")).select_by_index(servizio_idx)
-        time.sleep(1)
+        # Wait longer for the page to load fully
+        time.sleep(5)
         
-        if track_info.get('artist'):
-            artist_input = browser.find_element(By.ID, "artist")
-            artist_input.clear()
-            artist_input.send_keys(track_info['artist'])
+        # Wait for the service dropdown to appear
+        try:
+            service_select = WebDriverWait(browser, 30).until(
+                EC.presence_of_element_located((By.ID, "service"))
+            )
+            Select(service_select).select_by_index(servizio_idx)
+            time.sleep(2)  # Wait a bit after selection
+            log_messages.append("Servizio selezionato con successo")
+        except Exception as e:
+            log_messages.append(f"Errore nella selezione del servizio: {str(e)}")
+            # Try to take a screenshot for debugging
+            try:
+                screenshot_path = os.path.join(download_dir, f"error_screenshot_{track_key.replace(' ', '_')}.png")
+                browser.save_screenshot(screenshot_path)
+                log_messages.append(f"Screenshot salvato in {screenshot_path}")
+            except:
+                log_messages.append("Impossibile salvare lo screenshot")
+            raise
         
-        title_input = browser.find_element(By.ID, "title")
-        title_input.clear()
-        title_input.send_keys(track_info['title'])
-        
-        Select(browser.find_element(By.ID, "format")).select_by_value(formato_valore)
-        Select(browser.find_element(By.ID, "quality")).select_by_value(qualita_valore)
+        # Check if the page structure contains the expected form
+        page_source = browser.page_source
+        if "artist" not in page_source:
+            log_messages.append("La pagina non contiene il campo 'artist' - la struttura del sito potrebbe essere cambiata")
+            
+            # Let's try to find the form in a different way
+            form_elements = browser.find_elements(By.TAG_NAME, "form")
+            if form_elements:
+                log_messages.append(f"Trovati {len(form_elements)} form nella pagina")
+                
+                # Try to find input fields that might contain our fields
+                input_elements = browser.find_elements(By.TAG_NAME, "input")
+                if input_elements:
+                    log_messages.append(f"Trovati {len(input_elements)} campi input nella pagina")
+                    
+                    # Let's try to use the first few input fields for our data
+                    text_inputs = [el for el in input_elements if el.get_attribute("type") == "text"]
+                    
+                    # If we have at least two text inputs, we'll try to use them
+                    if len(text_inputs) >= 2:
+                        # First input for artist, second for title
+                        if track_info.get('artist'):
+                            text_inputs[0].clear()
+                            text_inputs[0].send_keys(track_info['artist'])
+                        
+                        text_inputs[1].clear()
+                        text_inputs[1].send_keys(track_info['title'])
+                        
+                        log_messages.append("Utilizzando campi input alternativi trovati nella pagina")
+                    else:
+                        log_messages.append("Non abbastanza campi input trovati per procedere")
+                        raise Exception("Struttura della pagina non riconosciuta")
+            else:
+                log_messages.append("Nessun form trovato nella pagina")
+                raise Exception("Struttura della pagina non riconosciuta")
+        else:
+            # Try to find and fill the normal form fields
+            try:
+                if track_info.get('artist'):
+                    artist_input = WebDriverWait(browser, 10).until(
+                        EC.presence_of_element_located((By.ID, "artist"))
+                    )
+                    artist_input.clear()
+                    artist_input.send_keys(track_info['artist'])
+                    log_messages.append("Campo artista compilato")
+                
+                title_input = WebDriverWait(browser, 10).until(
+                    EC.presence_of_element_located((By.ID, "title"))
+                )
+                title_input.clear()
+                title_input.send_keys(track_info['title'])
+                log_messages.append("Campo titolo compilato")
+                
+                format_select = WebDriverWait(browser, 10).until(
+                    EC.presence_of_element_located((By.ID, "format"))
+                )
+                Select(format_select).select_by_value(formato_valore)
+                log_messages.append("Formato selezionato")
+                
+                quality_select = WebDriverWait(browser, 10).until(
+                    EC.presence_of_element_located((By.ID, "quality"))
+                )
+                Select(quality_select).select_by_value(qualita_valore)
+                log_messages.append("Qualità selezionata")
+            except Exception as e:
+                log_messages.append(f"Errore nella compilazione del form: {str(e)}")
+                raise
         
         # Get existing files before download
         existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
         
         # Submit the form
-        log_messages.append(f"Avvio download per {track_key}...")
-        browser.find_element(By.NAME, "submit").click()
+        log_messages.append(f"Tentativo di avvio download per {track_key}...")
+        try:
+            # Try to find the submit button in different ways
+            submit_button = None
+            try:
+                submit_button = WebDriverWait(browser, 10).until(
+                    EC.element_to_be_clickable((By.NAME, "submit"))
+                )
+            except:
+                # If we can't find by name, try to find by type
+                submit_elements = browser.find_elements(By.XPATH, "//input[@type='submit']")
+                if submit_elements:
+                    submit_button = submit_elements[0]
+                else:
+                    # Try to find buttons
+                    button_elements = browser.find_elements(By.TAG_NAME, "button")
+                    if button_elements:
+                        for button in button_elements:
+                            if button.is_displayed() and button.is_enabled():
+                                submit_button = button
+                                break
+            
+            if submit_button:
+                submit_button.click()
+                log_messages.append("Pulsante di invio cliccato")
+            else:
+                log_messages.append("Pulsante di invio non trovato")
+                raise Exception("Impossibile trovare il pulsante per avviare il download")
+                
+        except Exception as e:
+            log_messages.append(f"Errore nell'invio del form: {str(e)}")
+            raise
         
         # Wait for download completion
         expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
