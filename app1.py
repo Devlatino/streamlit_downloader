@@ -587,7 +587,7 @@ if 'downloaded_files' in st.session_state and st.session_state.downloaded_files 
     st.success(f"🎉 Download completato! {len(st.session_state.downloaded_files)} tracce scaricate con successo.")
     st.session_state['download_started'] = False
 
-if st.button("Avvia Download") and tracks_to_download:
+if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
     st.session_state['download_started'] = True# Aggiunta di un disclaimer legale più visibile all'inizio
 st.sidebar.subheader("Disclaimer")
 st.sidebar.info("""
