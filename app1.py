@@ -354,8 +354,15 @@ def log_error(message):
 # Funzione principale per scaricare una traccia
 def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
     """Self-contained function that doesn't rely on session state"""
-    # Create track_key correctly from track_info
-    track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
+    # Create the track string from track_info
+    if isinstance(track_info, str):
+        traccia = track_info
+    else:
+        traccia = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
+    
+    # Create track_key for tracking
+    track_key = traccia
+    
     browser = None
     log_messages = []
     
@@ -371,159 +378,158 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-popup-blocking")
         options.add_argument("--window-size=1920,1080")
-        # Use a fixed user agent to avoid session state dependency
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         # Create a separate browser instance for this thread
         browser = webdriver.Chrome(options=options)
         
-        # Navigate to the website
-        log_messages.append(f"Navigazione al sito per {track_key}...")
-        browser.get("https://lucida.su")
+        # Split artist and track name
+        artista_input, traccia_input = split_title(traccia)
+        log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
         
-        # Wait longer for the page to load fully
+        # Navigate to the website
+        browser.get("https://lucida.su")
+        log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
+        
+        # Fill in the search field
+        input_field = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "download")))
+        input_field.clear()
+        input_field.send_keys(traccia)
+        time.sleep(2)
+        log_messages.append("✍️ Campo input compilato")
+        
+        # Select the service
+        select_service = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "service")))
+        opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
+        if servizio_idx >= len(opzioni_service):
+            log_messages.append(f"⚠️ Indice {servizio_idx} non valido per 'service'")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: Indice servizio non valido"
+            }
+        
+        servizio_valore = opzioni_service[servizio_idx].get_attribute("value")
+        browser.execute_script("""
+            var select = arguments[0];
+            var valore = arguments[1];
+            select.value = valore;
+            var events = ['mousedown', 'click', 'change', 'input', 'blur'];
+            events.forEach(function(eventType) {
+                var event = new Event(eventType, { bubbles: true });
+                select.dispatchEvent(event);
+            });
+            var svelteEvent = new CustomEvent('svelte-change', { bubbles: true });
+            select.dispatchEvent(svelteEvent);
+        """, select_service, servizio_valore)
+        log_messages.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
         time.sleep(5)
         
-        # Wait for the service dropdown to appear
-        try:
-            service_select = WebDriverWait(browser, 30).until(
-                EC.presence_of_element_located((By.ID, "service"))
-            )
-            Select(service_select).select_by_index(servizio_idx)
-            time.sleep(2)  # Wait a bit after selection
-            log_messages.append("Servizio selezionato con successo")
-        except Exception as e:
-            log_messages.append(f"Errore nella selezione del servizio: {str(e)}")
-            # Try to take a screenshot for debugging
-            try:
-                screenshot_path = os.path.join(download_dir, f"error_screenshot_{track_key.replace(' ', '_')}.png")
-                browser.save_screenshot(screenshot_path)
-                log_messages.append(f"Screenshot salvato in {screenshot_path}")
-            except:
-                log_messages.append("Impossibile salvare lo screenshot")
-            raise
+        # Select country
+        WebDriverWait(browser, 60).until(lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0)
+        select_country = Select(browser.find_element(By.ID, "country"))
+        if not select_country.options:
+            log_messages.append(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: Nessuna opzione paese"
+            }
+        select_country.select_by_index(0)
+        log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
+        time.sleep(1)
         
-        # Check if the page structure contains the expected form
-        page_source = browser.page_source
-        if "artist" not in page_source:
-            log_messages.append("La pagina non contiene il campo 'artist' - la struttura del sito potrebbe essere cambiata")
+        # Click "go"
+        go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
+        go_button.click()
+        log_messages.append("▶️ Pulsante 'go' cliccato")
+        time.sleep(5)
+        
+        # Search for results
+        WebDriverWait(browser, 60).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
+        )
+        titoli = browser.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
+        artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
+        log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
+        
+        # Find the best match
+        best_match_found = False
+        for i, titolo in enumerate(titoli):
+            titolo_testo = titolo.text.strip().lower()
+            traccia_testo = traccia_input.lower()
+            parole_traccia = set(traccia_testo.split())
+            parole_titolo = set(titolo_testo.split())
+            match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
             
-            # Let's try to find the form in a different way
-            form_elements = browser.find_elements(By.TAG_NAME, "form")
-            if form_elements:
-                log_messages.append(f"Trovati {len(form_elements)} form nella pagina")
+            log_messages.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match:.2%})")
+            if match >= 0.7 or traccia_testo in titolo_testo:
+                if artista_input and i < len(artisti):
+                    artista_normalizzato = normalize_artist(artista_input)
+                    artista_risultato = artisti[i].text.strip().lower()
+                    if artista_normalizzato and artista_normalizzato not in artista_risultato and match < 0.9:
+                        log_messages.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
+                        continue
                 
-                # Try to find input fields that might contain our fields
-                input_elements = browser.find_elements(By.TAG_NAME, "input")
-                if input_elements:
-                    log_messages.append(f"Trovati {len(input_elements)} campi input nella pagina")
-                    
-                    # Let's try to use the first few input fields for our data
-                    text_inputs = [el for el in input_elements if el.get_attribute("type") == "text"]
-                    
-                    # If we have at least two text inputs, we'll try to use them
-                    if len(text_inputs) >= 2:
-                        # First input for artist, second for title
-                        if track_info.get('artist'):
-                            text_inputs[0].clear()
-                            text_inputs[0].send_keys(track_info['artist'])
-                        
-                        text_inputs[1].clear()
-                        text_inputs[1].send_keys(track_info['title'])
-                        
-                        log_messages.append("Utilizzando campi input alternativi trovati nella pagina")
-                    else:
-                        log_messages.append("Non abbastanza campi input trovati per procedere")
-                        raise Exception("Struttura della pagina non riconosciuta")
-            else:
-                log_messages.append("Nessun form trovato nella pagina")
-                raise Exception("Struttura della pagina non riconosciuta")
-        else:
-            # Try to find and fill the normal form fields
-            try:
-                if track_info.get('artist'):
-                    artist_input = WebDriverWait(browser, 10).until(
-                        EC.presence_of_element_located((By.ID, "artist"))
-                    )
-                    artist_input.clear()
-                    artist_input.send_keys(track_info['artist'])
-                    log_messages.append("Campo artista compilato")
-                
-                title_input = WebDriverWait(browser, 10).until(
-                    EC.presence_of_element_located((By.ID, "title"))
-                )
-                title_input.clear()
-                title_input.send_keys(track_info['title'])
-                log_messages.append("Campo titolo compilato")
-                
-                format_select = WebDriverWait(browser, 10).until(
-                    EC.presence_of_element_located((By.ID, "format"))
-                )
-                Select(format_select).select_by_value(formato_valore)
-                log_messages.append("Formato selezionato")
-                
-                quality_select = WebDriverWait(browser, 10).until(
-                    EC.presence_of_element_located((By.ID, "quality"))
-                )
-                Select(quality_select).select_by_value(qualita_valore)
-                log_messages.append("Qualità selezionata")
-            except Exception as e:
-                log_messages.append(f"Errore nella compilazione del form: {str(e)}")
-                raise
+                browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
+                time.sleep(1)
+                titolo.click()
+                log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
+                best_match_found = True
+                break
         
-        # Get existing files before download
+        if not best_match_found:
+            log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: Traccia non trovata"
+            }
+        
+        time.sleep(5)
+        
+        # Select format
+        select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
+        select_convert.select_by_value(formato_valore)
+        log_messages.append(f"🎧 Formato selezionato")
+        time.sleep(1)
+        
+        # Select quality
+        select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
+        select_downsetting.select_by_value(qualita_valore)
+        log_messages.append(f"🔊 Qualità selezionata")
+        time.sleep(1)
+        
+        # Start download
         existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
+        download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
+        browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
+        time.sleep(1)
+        download_button.click()
+        log_messages.append("⬇️ Pulsante di download cliccato")
         
-        # Submit the form
-        log_messages.append(f"Tentativo di avvio download per {track_key}...")
-        try:
-            # Try to find the submit button in different ways
-            submit_button = None
-            try:
-                submit_button = WebDriverWait(browser, 10).until(
-                    EC.element_to_be_clickable((By.NAME, "submit"))
-                )
-            except:
-                # If we can't find by name, try to find by type
-                submit_elements = browser.find_elements(By.XPATH, "//input[@type='submit']")
-                if submit_elements:
-                    submit_button = submit_elements[0]
-                else:
-                    # Try to find buttons
-                    button_elements = browser.find_elements(By.TAG_NAME, "button")
-                    if button_elements:
-                        for button in button_elements:
-                            if button.is_displayed() and button.is_enabled():
-                                submit_button = button
-                                break
-            
-            if submit_button:
-                submit_button.click()
-                log_messages.append("Pulsante di invio cliccato")
-            else:
-                log_messages.append("Pulsante di invio non trovato")
-                raise Exception("Impossibile trovare il pulsante per avviare il download")
-                
-        except Exception as e:
-            log_messages.append(f"Errore nell'invio del form: {str(e)}")
-            raise
-        
-        # Wait for download completion
-        expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
-        success, message, path_to_downloaded_file = wait_for_download(download_dir, existing_files, expected_extension)
+        # Wait for download to complete
+        success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
         log_messages.append(message)
         
         return {
             "track_key": track_key,
             "success": success,
-            "downloaded_file": path_to_downloaded_file,
+            "downloaded_file": downloaded_file,
             "log": log_messages,
-            "status": "✅ Scaricato" if success and path_to_downloaded_file else f"❌ Errore: {message}"
+            "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
         }
         
     except Exception as e:
-        error_message = f"Errore durante il download di {track_key}: {str(e)}"
+        error_message = f"❌ Errore durante il download: {str(e)}"
         log_messages.append(error_message)
         return {
             "track_key": track_key,
