@@ -557,11 +557,9 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     st.session_state['download_started'] = True
     st.session_state.downloaded_files = []
     st.session_state.log_messages = []
-
-    if 'download_progress' not in st.session_state:
-        st.session_state.download_progress = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
-    else:
-        st.session_state.download_progress = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
+    st.session_state.pending_tracks = []
+    # Explicitly initialize download_progress here
+    st.session_state.download_progress = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
     st.session_state.download_errors = {}
     progress_bar = st.progress(0)
     num_tracks = len(tracks_to_download)
@@ -570,6 +568,7 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = [executor.submit(download_track_wrapper, track, servizio_indice, formato_valore, qualita_valore, use_proxy)
                    for track in tracks_to_download]
+
 
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             downloaded_file = future.result()
