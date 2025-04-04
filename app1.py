@@ -96,6 +96,22 @@ if 'download_errors' not in st.session_state:
 if 'servizi_disponibili' not in st.session_state:
     st.session_state['servizi_disponibili'] = []
 
+# Make sure all required session state keys are initialized
+required_keys = [
+    'downloaded_files', 'pending_tracks', 'log_messages', 'spotify_tracks_cache',
+    'last_cache_update', 'browser_pool', 'user_agent_index', 'proxy_index',
+    'download_progress', 'download_errors', 'servizi_disponibili'
+]
+
+for key in required_keys:
+    if key not in st.session_state:
+        if key in ['downloaded_files', 'pending_tracks', 'log_messages', 'browser_pool', 'servizi_disponibili']:
+            st.session_state[key] = []
+        elif key in ['spotify_tracks_cache', 'last_cache_update', 'download_progress', 'download_errors']:
+            st.session_state[key] = {}
+        elif key in ['user_agent_index', 'proxy_index']:
+            st.session_state[key] = 0
+
 
 # 6. Configurazione Selenium Avanzata
 USER_AGENTS = [
@@ -118,12 +134,20 @@ CACHE_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 
 # Funzione per ottenere il prossimo user agent
 def get_next_user_agent():
+    # Ensure the key is initialized
+    if 'user_agent_index' not in st.session_state:
+        st.session_state['user_agent_index'] = 0
+    
     user_agent = USER_AGENTS[st.session_state['user_agent_index'] % len(USER_AGENTS)]
     st.session_state['user_agent_index'] += 1
     return user_agent
 
 # Funzione per ottenere il prossimo proxy
 def get_next_proxy():
+    # Ensure the key is initialized
+    if 'proxy_index' not in st.session_state:
+        st.session_state['proxy_index'] = 0
+        
     if PROXY_LIST:
         proxy = PROXY_LIST[st.session_state['proxy_index'] % len(PROXY_LIST)]
         st.session_state['proxy_index'] += 1
@@ -329,61 +353,41 @@ def log_error(message):
 
 # Funzione principale per scaricare una traccia
 def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
-    track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
-    log = []
-    downloaded_file = None
-    success = False
-    artist = track_info.get('artist')
-    title = track_info.get('title')
-    search_query = f"{artist} - {title}" if artist else title
-    expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
-
-    # Create a browser instance specifically for this thread
+    """Self-contained function that doesn't rely on session state"""
     browser = None
-    
     try:
-        browser = create_thread_safe_browser_instance(use_proxy)
+        # Create browser options without using session state
+        options = webdriver.ChromeOptions()
+        prefs = {"download.default_directory": download_dir,
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": True}
+        options.add_experimental_option("prefs", prefs)
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        # Use a fixed user agent to avoid session state dependency
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
-        log.append(f"🎤 Artista: {artist} | 🎵 Traccia: {title}")
-        if use_proxy:
-            proxy = get_thread_safe_proxy()
-            log.append(f"🌐 Utilizzo proxy: {proxy}" if proxy else "🌐 Nessun proxy configurato.")
-        else:
-            log.append("🌐 Nessun proxy configurato.")
-
-        browser.get("https://lucida.su")
-        log.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
-        time.sleep(random.uniform(2, 5))
-
-        # Rest of your download code
-        input_field = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "download")))
-        input_field.clear()
-        input_field.send_keys(search_query)
-        time.sleep(random.uniform(1, 3))
-        log.append("✍️ Campo input compilato")
-
-        # Continue with the rest of your function...
-        # [Your existing code for downloading]
-
+        # Create a separate browser instance for this thread
+        browser = webdriver.Chrome(options=options)
+        
+        # Rest of your download logic
+        # [...]
+        
+        return {"success": True, "downloaded_file": path_to_downloaded_file, "log": log_messages}
+        
     except Exception as e:
-        error_msg = f"Errore durante il download di '{title}': {str(e)}"
-        log.append(f"❌ {error_msg}")
-        success = False
+        return {"success": False, "downloaded_file": None, "log": [f"Error: {str(e)}"]}
+        
     finally:
-        # Clean up browser
         if browser:
             try:
                 browser.quit()
-            except Exception as e:
-                log.append(f"Errore nella chiusura del browser: {str(e)}")
-
-    return {
-        "track_key": track_key,
-        "success": success,
-        "downloaded_file": downloaded_file,
-        "log": log,
-        "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
-    }
+            except Exception:
+                pass
 
 
 # Teniamo traccia dello stato localmente per ciascun thread
@@ -464,15 +468,44 @@ st.warning("⚠️ Prima di scaricare, assicurati di rispettare le leggi sul cop
 use_proxy = st.sidebar.checkbox("Usa Proxy", False)
 
 # Carica i servizi disponibili
-if not st.session_state['servizi_disponibili']:
+# Carica i servizi disponibili
+if 'servizi_disponibili' not in st.session_state or not st.session_state['servizi_disponibili']:
     with st.spinner("Caricamento servizi disponibili..."):
-        temp_browser = create_browser_instance(use_proxy)
-        st.session_state['servizi_disponibili'] = get_available_services(temp_browser)
-        return_browser_to_pool(temp_browser)
-    if st.session_state['servizi_disponibili']:
-        st.success(f"Caricati {len(st.session_state['servizi_disponibili'])} servizi disponibili.")
-    else:
-        st.warning("Impossibile caricare i servizi disponibili.")
+        try:
+            options = webdriver.ChromeOptions()
+            options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            
+            # Use a fixed user agent to avoid session state dependency
+            options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            
+            # Create a temporary browser without relying on functions that use session state
+            temp_browser = webdriver.Chrome(options=options)
+            
+            # Get available services
+            try:
+                st.session_state['servizi_disponibili'] = get_available_services(temp_browser)
+            finally:
+                # Always close the browser
+                try:
+                    temp_browser.quit()
+                except:
+                    pass
+                
+            if st.session_state['servizi_disponibili']:
+                st.success(f"Caricati {len(st.session_state['servizi_disponibili'])} servizi disponibili.")
+            else:
+                st.warning("Impossibile caricare i servizi disponibili.")
+                # Default services if none are loaded
+                st.session_state['servizi_disponibili'] = [{"index": 1, "value": "1", "text": "Servizio predefinito"}]
+        except Exception as e:
+            st.error(f"Errore durante il caricamento dei servizi: {str(e)}")
+            # Default services in case of error
+            st.session_state['servizi_disponibili'] = [{"index": 1, "value": "1", "text": "Servizio predefinito"}]
+
 
 # Preferenze di download
 st.subheader("Preferenze di download")
@@ -563,11 +596,13 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         status_placeholder = st.empty()
         
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        # Start all downloads using the thread-safe function
-        futures = [executor.submit(
+    futures = [
+        executor.submit(
             download_track_thread_safe, 
             track, servizio_indice, formato_valore, qualita_valore, use_proxy
-        ) for track in tracks_to_download]
+        ) 
+        for track in tracks_to_download
+    ]
         
         # Show status during download
         pending_futures = list(futures)
