@@ -247,6 +247,25 @@ def is_file_complete(filepath, expected_extension):
         return False
     return os.path.getsize(filepath) > 0
 
+def similar_artists(artist1, artist2):
+    # Normalizza entrambi
+    a1 = re.sub(r'[^\w\s]', '', artist1.lower())
+    a2 = re.sub(r'[^\w\s]', '', artist2.lower())
+    
+    # Se uno è contenuto nell'altro
+    if a1 in a2 or a2 in a1:
+        return True
+    
+    # Verifica parole simili
+    words1 = set(a1.split())
+    words2 = set(a2.split())
+    
+    # Se c'è almeno una parola in comune (escluse parole comuni come "the", "feat", ecc.)
+    common_words = words1.intersection(words2)
+    common_words = {w for w in common_words if len(w) > 2 and w not in ['the', 'feat', 'and', 'con']}
+    
+    return len(common_words) > 0
+
 # Funzione per aspettare il download
 def wait_for_download(download_dir, existing_files, formato, timeout=180):
     start_time = time.time()
@@ -461,28 +480,44 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         
         # Find the best match
         best_match_found = False
-        for i, titolo in enumerate(titoli):
-            titolo_testo = titolo.text.strip().lower()
-            traccia_testo = traccia_input.lower()
-            parole_traccia = set(traccia_testo.split())
-            parole_titolo = set(titolo_testo.split())
-            match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
+       for i, titolo in enumerate(titoli):
+        titolo_testo = titolo.text.strip().lower()
+        traccia_testo = traccia_input.lower()
+    
+    # Normalizza i caratteri speciali
+        titolo_normalizzato = re.sub(r'[^\w\s]', '', titolo_testo)
+        traccia_normalizzata = re.sub(r'[^\w\s]', '', traccia_testo)
+    
+    # Crea set di parole per il confronto
+        parole_traccia = set(traccia_normalizzata.split())
+        parole_titolo = set(titolo_normalizzato.split())
+    
+    # Calcola diverse metriche di somiglianza
+        match_percent = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
+        contains_check = any(word in titolo_normalizzato for word in traccia_normalizzata.split() if len(word) > 3)
+    
+        log_messages.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match_percent:.2%})")
+    
+    # Criteri più flessibili per la corrispondenza
+        if match_percent >= 0.5 or contains_check or traccia_normalizzata in titolo_normalizzato:
+        # Verifica l'artista in modo più flessibile se disponibile
+            if artista_input and i < len(artisti):
+            artista_normalizzato = normalize_artist(artista_input)
+            artista_risultato = artisti[i].text.strip().lower()
             
-            log_messages.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match:.2%})")
-            if match >= 0.7 or traccia_testo in titolo_testo:
-                if artista_input and i < len(artisti):
-                    artista_normalizzato = normalize_artist(artista_input)
-                    artista_risultato = artisti[i].text.strip().lower()
-                    if artista_normalizzato and artista_normalizzato not in artista_risultato and match < 0.9:
-                        log_messages.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
-                        continue
-                
-                browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
-                time.sleep(1)
-                titolo.click()
-                log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
-                best_match_found = True
-                break
+            # Approccio più permissivo per gli artisti 
+            # (verifica solo se molto diversi e la corrispondenza del titolo non è forte)
+            artisti_simili = similar_artists(artista_normalizzato, artista_risultato)
+            if not artisti_simili and match_percent < 0.7:
+                log_messages.append(f"⚠️ Possibile artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
+                continue
+        
+        browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
+        time.sleep(1)
+        titolo.click()
+        log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
+        best_match_found = True
+        break
         
         if not best_match_found:
             log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
@@ -838,10 +873,11 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     st.write(f"**Scaricate con successo:** {downloaded_count}")
     st.write(f"**Tracce non scaricate:** {len(st.session_state['pending_tracks'])}")
     
-    if st.session_state['pending_tracks']:
-        st.write("**Elenco tracce non scaricate:**")
-        for track_key in st.session_state['pending_tracks']:
-            st.write(f"- {track_key}")
+   if st.session_state['pending_tracks']:
+    retry_button = st.button("Riprova con servizio alternativo")
+    if retry_button:
+        alternative_service = (servizio_indice + 1) % len(servizio_opzioni)
+        # Avvia nuovo download per le tracce pendenti ma con il servizio alternativo
         
         if st.session_state['download_errors']:
             with st.expander("Dettagli errori download"):
