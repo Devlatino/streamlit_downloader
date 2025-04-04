@@ -521,52 +521,6 @@ if tracks_to_download:
         tracks_to_download.sort(key=lambda x: x.get('title', '').lower())
 
     st.dataframe(tracks_to_download)
-
-    if st.button("Avvia Download"):
-        st.session_state.downloaded_files = []
-        st.session_state.log_messages = []
-        st.session_state.pending_tracks = []
-        st.session_state.download_progress = {f"{t['artist']} - {t['title']}": "In attesa..." for t in tracks_to_download}
-        st.session_state.download_errors = {}
-        progress_bar = st.progress(0)
-        num_tracks = len(tracks_to_download)
-        downloaded_count = 0
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = [executor.submit(download_track_wrapper, track, servizio_indice, formato_valore, qualita_valore, use_proxy)
-                       for track in tracks_to_download]
-
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                downloaded_file = future.result()
-                track = tracks_to_download[i]
-                track_key = f"{track['artist']} - {track['title']}"
-                if downloaded_file:
-                    st.session_state.downloaded_files.append(downloaded_file)
-                    st.session_state.pending_tracks = [t for t in st.session_state.pending_tracks if t != track_key]
-                    downloaded_count += 1
-                else:
-                    if track_key not in st.session_state.pending_tracks:
-                        st.session_state.pending_tracks.append(track_key)
-                progress_bar.progress((i + 1) / num_tracks)
-
-        st.write("### Stato Download Tracce:")
-        for track_key, status in st.session_state.download_progress.items():
-            st.write(f"- {track_key}: {status}")
-
-        st.write("### Riepilogo Download")
-        st.write(f"**Totale tracce:** {num_tracks}")
-        st.write(f"**Scaricate con successo:** {downloaded_count}")
-        st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
-        if st.session_state.pending_tracks:
-            st.write("**Elenco tracce non scaricate:**")
-            for track_key in st.session_state.pending_tracks:
-                st.write(f"- {track_key}")
-            if st.session_state.download_errors:
-                with st.expander("Dettagli errori download"):
-                    for track_key, errors in st.session_state.download_errors.items():
-                        st.write(f"**{track_key}:**")
-                        for error in errors:
-                            st.write(f"- {error}")
                             
 # Pulizia iniziale del pool di browser all'avvio (se presente)
 if st.session_state.browser_pool:
@@ -594,7 +548,51 @@ if 'downloaded_files' in st.session_state and st.session_state.downloaded_files 
     st.session_state['download_started'] = False
 
 if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
-    st.session_state['download_started'] = True# Aggiunta di un disclaimer legale più visibile all'inizio
+    st.session_state['download_started'] = True
+    st.session_state.downloaded_files = []
+    st.session_state.log_messages = []
+    st.session_state.pending_tracks = []
+    st.session_state.download_progress = {f"{t['artist']} - {t['title']}": "In attesa..." for t in tracks_to_download}
+    st.session_state.download_errors = {}
+    progress_bar = st.progress(0)
+    num_tracks = len(tracks_to_download)
+    downloaded_count = 0
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(download_track_wrapper, track, servizio_indice, formato_valore, qualita_valore, use_proxy)
+                   for track in tracks_to_download]
+
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            downloaded_file = future.result()
+            track = tracks_to_download[i]
+            track_key = f"{track['artist']} - {track['title']}"
+            if downloaded_file:
+                st.session_state.downloaded_files.append(downloaded_file)
+                st.session_state.pending_tracks = [t for t in st.session_state.pending_tracks if t != track_key]
+                downloaded_count += 1
+            else:
+                if track_key not in st.session_state.pending_tracks:
+                    st.session_state.pending_tracks.append(track_key)
+            progress_bar.progress((i + 1) / num_tracks)
+
+    st.write("### Stato Download Tracce:")
+    for track_key, status in st.session_state.download_progress.items():
+        st.write(f"- {track_key}: {status}")
+
+    st.write("### Riepilogo Download")
+    st.write(f"**Totale tracce:** {num_tracks}")
+    st.write(f"**Scaricate con successo:** {downloaded_count}")
+    st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
+    if st.session_state.pending_tracks:
+        st.write("**Elenco tracce non scaricate:**")
+        for track_key in st.session_state.pending_tracks:
+            st.write(f"- {track_key}")
+        if st.session_state.download_errors:
+            with st.expander("Dettagli errori download"):
+                for track_key, errors in st.session_state.download_errors.items():
+                    st.write(f"**{track_key}:**")
+                    for error in errors:
+                        st.write(f"- {error}")
 st.sidebar.subheader("Disclaimer")
 st.sidebar.info("""
 Questo strumento è fornito a scopo didattico e per uso personale.
