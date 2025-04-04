@@ -480,44 +480,44 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         
         # Find the best match
         best_match_found = False
-       for i, titolo in enumerate(titoli):
-        titolo_testo = titolo.text.strip().lower()
-        traccia_testo = traccia_input.lower()
+        for i, titolo in enumerate(titoli):
+            titolo_testo = titolo.text.strip().lower()
+            traccia_testo = traccia_input.lower()
     
     # Normalizza i caratteri speciali
-        titolo_normalizzato = re.sub(r'[^\w\s]', '', titolo_testo)
-        traccia_normalizzata = re.sub(r'[^\w\s]', '', traccia_testo)
+            titolo_normalizzato = re.sub(r'[^\w\s]', '', titolo_testo)
+            traccia_normalizzata = re.sub(r'[^\w\s]', '', traccia_testo)
     
     # Crea set di parole per il confronto
-        parole_traccia = set(traccia_normalizzata.split())
-        parole_titolo = set(titolo_normalizzato.split())
+            parole_traccia = set(traccia_normalizzata.split())
+            parole_titolo = set(titolo_normalizzato.split())
     
     # Calcola diverse metriche di somiglianza
-        match_percent = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
-        contains_check = any(word in titolo_normalizzato for word in traccia_normalizzata.split() if len(word) > 3)
+            match_percent = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
+            contains_check = any(word in titolo_normalizzato for word in traccia_normalizzata.split() if len(word) > 3)
     
-        log_messages.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match_percent:.2%})")
+            log_messages.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match_percent:.2%})")
     
     # Criteri più flessibili per la corrispondenza
-        if match_percent >= 0.5 or contains_check or traccia_normalizzata in titolo_normalizzato:
+            if match_percent >= 0.5 or contains_check or traccia_normalizzata in titolo_normalizzato:
         # Verifica l'artista in modo più flessibile se disponibile
-            if artista_input and i < len(artisti):
-            artista_normalizzato = normalize_artist(artista_input)
-            artista_risultato = artisti[i].text.strip().lower()
+                if artista_input and i < len(artisti):
+                artista_normalizzato = normalize_artist(artista_input)
+                artista_risultato = artisti[i].text.strip().lower()
             
             # Approccio più permissivo per gli artisti 
             # (verifica solo se molto diversi e la corrispondenza del titolo non è forte)
-            artisti_simili = similar_artists(artista_normalizzato, artista_risultato)
+                artisti_simili = similar_artists(artista_normalizzato, artista_risultato)
             if not artisti_simili and match_percent < 0.7:
                 log_messages.append(f"⚠️ Possibile artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
                 continue
         
-        browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
-        time.sleep(1)
-        titolo.click()
-        log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
-        best_match_found = True
-        break
+            browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
+            time.sleep(1)
+            titolo.click()
+            log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
+            best_match_found = True
+            break
         
         if not best_match_found:
             log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
