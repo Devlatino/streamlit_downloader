@@ -183,7 +183,8 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
     expected_extension = formato.split('-')[0] if '-' in formato else formato
 
     while time.time() - start_time < timeout:
-        current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
+        current_files = [os.path
+                          .abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
         crdownload_files = glob.glob(os.path.join(download_dir, "*.crdownload"))
 
         new_files = [f for f in current_files if f not in existing_files]
@@ -414,24 +415,24 @@ def _download_single_track(track_info, servizio_idx, formato_valore, qualita_val
         return_browser_to_pool(browser)
         return success, downloaded_file, log
 
-# Funzione wrapper per il download con gestione dello stato
+# Teniamo traccia dello stato localmente per ciascun thread
 def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
     track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
     
-    # Aggiorniamo lo stato
-    st.session_state['download_progress'][track_key] = "In corso..."
+    # Non accediamo a st.session_state qui perché può causare problemi di thread-safety
+    # Invece restituiamo le informazioni e lo stato viene aggiornato nel thread principale
     
     # Eseguiamo il download
     success, downloaded_file, log = _download_single_track(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy)
     
-    # Aggiorniamo lo stato del download
-    if success and downloaded_file:
-        st.session_state['download_progress'][track_key] = "✅ Scaricato"
-        return downloaded_file
-    else:
-        st.session_state['download_progress'][track_key] = f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
-        st.session_state['download_errors'][track_key] = log
-        return None
+    # Restituiamo un dizionario con tutte le informazioni necessarie
+    return {
+        "track_key": track_key,
+        "success": success,
+        "downloaded_file": downloaded_file,
+        "log": log,
+        "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
+    }
 
 # 7. Pulizia Risorse - Autopulizia File
 def cleanup_temp_files():
@@ -567,43 +568,107 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     st.session_state['downloaded_files'] = []
     st.session_state['log_messages'] = []
     st.session_state['pending_tracks'] = []
-    # Explicitly initialize download_progress here
-    st.session_state['download_progress'] = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
+    # Inizializziamo il dizionario di stato per tutte le tracce
+    track_status = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
+    # Aggiorniamo lo stato della sessione una sola volta, non per ogni thread
+    st.session_state['download_progress'] = track_status.copy()
     st.session_state['download_errors'] = {}
+    
     progress_bar = st.progress(0)
     num_tracks = len(tracks_to_download)
     downloaded_count = 0
-
+    
+    # Contenitore per i risultati del download
+    download_results_container = st.container()
+    with download_results_container.container():
+        status_placeholder = st.empty()
+        
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        # Avviamo tutti i download
         futures = [executor.submit(download_track_wrapper, track, servizio_indice, formato_valore, qualita_valore, use_proxy)
                    for track in tracks_to_download]
+        
+        # Mostriamo lo stato durante il download
+        pending_futures = list(futures)
+        downloaded_files = []
+        pending_tracks = []
+        download_errors = {}
+        
+        while pending_futures:
+            # Aggiorniamo lo stato visivamente
+            status_text = "<h3>Stato Download in corso:</h3>"
+            for track_key, status in track_status.items():
+                status_class = ""
+                if "In corso" in status:
+                    status_class = "info"
+                elif "✅ Scaricato" in status:
+                    status_class = "success"
+                elif "❌ Errore" in status:
+                    status_class = "error"
+                status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+            
+            status_placeholder.markdown(status_text, unsafe_allow_html=True)
+            
+            # Controlliamo i download completati
+            done, pending_futures = concurrent.futures.wait(
+                pending_futures, 
+                timeout=0.5,
+                return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            
+            # Elaboriamo i download completati
+            for future in done:
+                try:
+                    result = future.result()
+                    track_key = result["track_key"]
+                    
+                    # Aggiorniamo lo stato locale
+                    track_status[track_key] = result["status"]
+                    
+                    if result["success"] and result["downloaded_file"]:
+                        downloaded_files.append(result["downloaded_file"])
+                        downloaded_count += 1
+                    else:
+                        pending_tracks.append(track_key)
+                        download_errors[track_key] = result["log"]
+                    
+                    # Aggiorniamo la progress bar
+                    progress_value = (len(tracks_to_download) - len(pending_futures)) / num_tracks
+                    progress_bar.progress(progress_value)
+                
+                except Exception as e:
+                    st.error(f"Errore nel processare i risultati del download: {str(e)}")
+        
+        # Aggiorniamo lo stato della sessione alla fine
+        st.session_state['downloaded_files'] = downloaded_files
+        st.session_state['pending_tracks'] = pending_tracks
+        st.session_state['download_errors'] = download_errors
+        st.session_state['download_progress'] = track_status
 
-
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            downloaded_file = future.result()
-            track = tracks_to_download[i]
-            track_key = f"{track.get('artist', '')} - {track.get('title', '')}"
-            if downloaded_file:
-                st.session_state['downloaded_files'].append(downloaded_file)
-                st.session_state['pending_tracks'] = [t for t in st.session_state['pending_tracks'] if t != track_key]
-                downloaded_count += 1
-            else:
-                if track_key not in st.session_state['pending_tracks']:
-                    st.session_state['pending_tracks'].append(track_key)
-            progress_bar.progress((i + 1) / num_tracks)
-
-    st.write("### Stato Download Tracce:")
+    # Stato finale
+    status_text = "<h3>Stato Download Finale:</h3>"
     for track_key, status in st.session_state['download_progress'].items():
-        st.write(f"- {track_key}: {status}")
+        status_class = ""
+        if "In corso" in status:
+            status_class = "info"
+        elif "✅ Scaricato" in status:
+            status_class = "success"
+        elif "❌ Errore" in status:
+            status_class = "error"
+        status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+        
+    status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
     st.write("### Riepilogo Download")
     st.write(f"**Totale tracce:** {num_tracks}")
     st.write(f"**Scaricate con successo:** {downloaded_count}")
     st.write(f"**Tracce non scaricate:** {len(st.session_state['pending_tracks'])}")
+    
     if st.session_state['pending_tracks']:
         st.write("**Elenco tracce non scaricate:**")
         for track_key in st.session_state['pending_tracks']:
             st.write(f"- {track_key}")
+        
         if st.session_state['download_errors']:
             with st.expander("Dettagli errori download"):
                 for track_key, errors in st.session_state['download_errors'].items():
@@ -644,19 +709,6 @@ with st.sidebar.expander("Impostazioni Avanzate"):
 if st.sidebar.checkbox("Modalità Sorpresa?"):
     st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)") # Sostituisci con un link a un'immagine
     st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
-
-# Ulteriore feedback visivo durante il download
-if 'download_progress' in st.session_state and st.session_state['download_progress']:
-    st.subheader("Stato Download Dettagliato")
-    for track, status in st.session_state['download_progress'].items():
-        if "In corso" in status:
-            st.info(f"⏳ {track}: {status}")
-        elif "✅ Scaricato" in status:
-            st.success(f"{track}: {status}")
-        elif "❌ Errore" in status:
-            st.error(f"{track}: {status}")
-        else:
-            st.write(f"{track}: {status}")
 
 # Messaggio finale per indicare che non ci sono ulteriori implementazioni immediate
 st.markdown("---")
@@ -702,3 +754,27 @@ st.info("Grazie per aver utilizzato il Downloader di Tracce Musicali (PIZZUNA)!"
 
 st.markdown("---")
 st.markdown("Sviluppato con ❤️ da un appassionato di musica.")
+
+# Aggiungiamo un po' di stile CSS per migliorare la visualizzazione
+st.markdown("""
+<style>
+    .info {
+        padding: 5px;
+        background-color: #e7f5fe;
+        border-left: 5px solid #2196F3;
+        margin: 5px 0;
+    }
+    .success {
+        padding: 5px;
+        background-color: #e7ffe7;
+        border-left: 5px solid #4CAF50;
+        margin: 5px 0;
+    }
+    .error {
+        padding: 5px;
+        background-color: #ffebee;
+        border-left: 5px solid #f44336;
+        margin: 5px 0;
+    }
+</style>
+""", unsafe_allow_html=True)
