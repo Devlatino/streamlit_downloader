@@ -50,7 +50,7 @@ if 'user_agent_index' not in st.session_state:
 if 'proxy_index' not in st.session_state:
     st.session_state.proxy_index = 0
 if 'download_progress' not in st.session_state:
-    st.session_state.download_progress = {}  # Initialize download_progress HERE
+    st.session_state.download_progress = {}
 if 'download_errors' not in st.session_state:
     st.session_state.download_errors = {}
 
@@ -408,13 +408,27 @@ def _download_single_track(track_info, servizio_idx, formato_valore, qualita_val
 # Funzione wrapper per il download con gestione dello stato
 def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
     track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
+    # Assicuriamoci che download_progress sia inizializzato
+    if 'download_progress' not in st.session_state:
+        st.session_state.download_progress = {}
+    
+    # Aggiorniamo lo stato
     st.session_state.download_progress[track_key] = "In corso..."
+    
+    # Eseguiamo il download
     success, downloaded_file, log = _download_single_track(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy)
+    
+    # Aggiorniamo lo stato del download
     if success and downloaded_file:
         st.session_state.download_progress[track_key] = "✅ Scaricato"
         return downloaded_file
     else:
         st.session_state.download_progress[track_key] = f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
+        
+        # Assicuriamoci che download_errors sia inizializzato
+        if 'download_errors' not in st.session_state:
+            st.session_state.download_errors = {}
+        
         st.session_state.download_errors[track_key] = log
         return None
 
@@ -437,6 +451,20 @@ def manage_cache_size():
     # La cache di st.cache_data ha una gestione implicita,
     # per cache più complesse si dovrebbe implementare una logica di rimozione (LRU, LFU, ecc.)
     pass
+
+# Funzione per chiudere correttamente tutti i browser nel pool
+def close_all_browsers():
+    if 'browser_pool' in st.session_state:
+        for browser in st.session_state.browser_pool:
+            try:
+                browser.quit()
+            except Exception as e:
+                st.session_state.log_messages.append(f"Errore nella chiusura del browser: {str(e)}")
+        st.session_state.browser_pool = []
+
+# Registra la funzione di pulizia da eseguire all'uscita
+import atexit
+atexit.register(close_all_browsers)
 
 # Interfaccia Streamlit
 st.title("Downloader di Tracce Musicali (PIZZUNA)")
@@ -519,37 +547,17 @@ if tracks_to_download:
 
     st.dataframe(tracks_to_download)
 
-# Pulizia iniziale del pool di browser all'avvio (se presente)
-if st.session_state.browser_pool:
-    for browser in st.session_state.browser_pool:
-        try:
-            browser.quit()
-        except:
-            pass
-    st.session_state.browser_pool = []
-# ma è buona pratica se si gestisse il ciclo di vita dell'app in modo diverso)
-# import atexit
-# def close_browser_pool():
-#     if 'browser_pool' in st.session_state:
-#         for browser in st.session_state.browser_pool:
-#             try:
-#                 browser.quit()
-#             except:
-#                 pass
-# atexit.register(close_browser_pool)
-
 # 8. Notifiche e Feedback (implementazione semplice via Streamlit)
 if 'downloaded_files' in st.session_state and st.session_state.downloaded_files and st.session_state.get('download_started', False):
     st.balloons()
     st.success(f"🎉 Download completato! {len(st.session_state.downloaded_files)} tracce scaricate con successo.")
     st.session_state['download_started'] = False
 
-st.write(f"Tracks to download: {tracks_to_download}")
 if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
     st.session_state['download_started'] = True
     st.session_state.downloaded_files = []
     st.session_state.log_messages = []
-    st.session_state.pending_tracks = []
+
     if 'download_progress' not in st.session_state:
         st.session_state.download_progress = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
     else:
