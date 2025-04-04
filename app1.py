@@ -34,27 +34,27 @@ if not CLIENT_ID or not CLIENT_SECRET:
 
 # Inizializza lo stato della sessione
 if 'downloaded_files' not in st.session_state:
-    st.session_state.downloaded_files = []
+    st.session_state['downloaded_files'] = []
 if 'pending_tracks' not in st.session_state:
-    st.session_state.pending_tracks = []
+    st.session_state['pending_tracks'] = []
 if 'log_messages' not in st.session_state:
-    st.session_state.log_messages = []
+    st.session_state['log_messages'] = []
 if 'spotify_tracks_cache' not in st.session_state:
-    st.session_state.spotify_tracks_cache = {}
+    st.session_state['spotify_tracks_cache'] = {}
 if 'last_cache_update' not in st.session_state:
-    st.session_state.last_cache_update = {}
+    st.session_state['last_cache_update'] = {}
 if 'browser_pool' not in st.session_state:
-    st.session_state.browser_pool = []
+    st.session_state['browser_pool'] = []
 if 'user_agent_index' not in st.session_state:
-    st.session_state.user_agent_index = 0
+    st.session_state['user_agent_index'] = 0
 if 'proxy_index' not in st.session_state:
-    st.session_state.proxy_index = 0
+    st.session_state['proxy_index'] = 0
 if 'download_progress' not in st.session_state:
-    st.session_state.download_progress = {}
+    st.session_state['download_progress'] = {}
 if 'download_errors' not in st.session_state:
-    st.session_state.download_errors = {}
+    st.session_state['download_errors'] = {}
 if 'servizi_disponibili' not in st.session_state:
-    st.session_state.servizi_disponibili = []
+    st.session_state['servizi_disponibili'] = []
 
 
 # 6. Configurazione Selenium Avanzata
@@ -78,15 +78,15 @@ CACHE_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 
 # Funzione per ottenere il prossimo user agent
 def get_next_user_agent():
-    user_agent = USER_AGENTS[st.session_state.user_agent_index % len(USER_AGENTS)]
-    st.session_state.user_agent_index += 1
+    user_agent = USER_AGENTS[st.session_state['user_agent_index'] % len(USER_AGENTS)]
+    st.session_state['user_agent_index'] += 1
     return user_agent
 
 # Funzione per ottenere il prossimo proxy
 def get_next_proxy():
     if PROXY_LIST:
-        proxy = PROXY_LIST[st.session_state.proxy_index % len(PROXY_LIST)]
-        st.session_state.proxy_index += 1
+        proxy = PROXY_LIST[st.session_state['proxy_index'] % len(PROXY_LIST)]
+        st.session_state['proxy_index'] += 1
         return proxy
     return None
 
@@ -127,14 +127,14 @@ def create_browser_instance(use_proxy=False):
 
 # 3. Ottimizzazione Performance - Browser Pool
 def get_browser_from_pool(use_proxy=False):
-    if st.session_state.browser_pool:
-        return st.session_state.browser_pool.pop()
+    if st.session_state['browser_pool']:
+        return st.session_state['browser_pool'].pop()
     return create_browser_instance(use_proxy)
 
 def return_browser_to_pool(browser):
     if browser:
         try:
-            st.session_state.browser_pool.append(browser)
+            st.session_state['browser_pool'].append(browser)
         except Exception as e:
             safe_browser_quit(browser)
             st.error(f"Errore nel ritorno del browser al pool: {str(e)}")
@@ -220,7 +220,7 @@ def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricat
                     zipf.write(file_path, os.path.basename(file_path))
         return zip_path if os.path.exists(zip_path) else None
     except Exception as e:
-        st.session_state.log_messages.append(f"Errore nella creazione dello ZIP: {str(e)}")
+        st.session_state['log_messages'].append(f"Errore nella creazione dello ZIP: {str(e)}")
         return None
 
 # Funzione per estrarre l'ID della playlist
@@ -254,7 +254,7 @@ def get_spotify_tracks(playlist_link):
         return [{"artist": ', '.join([artist['name'] for artist in item['track']['artists']]),
                 "title": item['track']['name']} for item in tracks_data if item['track']]
     except Exception as e:
-        st.session_state.log_messages.append(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
+        st.session_state['log_messages'].append(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
         return None
 
 # Funzione per ottenere i servizi disponibili
@@ -269,7 +269,7 @@ def get_available_services(browser):
         return [{"index": i, "value": opt.get_attribute("value"), "text": opt.text}
                 for i, opt in enumerate(options) if i > 0]
     except Exception as e:
-        st.session_state.log_messages.append(f"Errore nel recupero dei servizi: {str(e)}")
+        st.session_state['log_messages'].append(f"Errore nel recupero dei servizi: {str(e)}")
         return []
 
 # 2. Gestione degli Errori Migliorata - Logging Strutturato
@@ -278,7 +278,7 @@ def log_error(message):
     log_message = f"[{timestamp}] ERROR: {message}\n"
     with open("error.log", "a") as f:
         f.write(log_message)
-    st.session_state.log_messages.append(f"🔴 {message}")
+    st.session_state['log_messages'].append(f"🔴 {message}")
 
 # Funzione principale per scaricare una traccia
 def _download_single_track(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
@@ -417,28 +417,20 @@ def _download_single_track(track_info, servizio_idx, formato_valore, qualita_val
 # Funzione wrapper per il download con gestione dello stato
 def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
     track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
-    # Assicuriamoci che download_progress sia inizializzato
-    if 'download_progress' not in st.session_state:
-        st.session_state.download_progress = {}
     
     # Aggiorniamo lo stato
-    st.session_state.download_progress[track_key] = "In corso..."
+    st.session_state['download_progress'][track_key] = "In corso..."
     
     # Eseguiamo il download
     success, downloaded_file, log = _download_single_track(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy)
     
     # Aggiorniamo lo stato del download
     if success and downloaded_file:
-        st.session_state.download_progress[track_key] = "✅ Scaricato"
+        st.session_state['download_progress'][track_key] = "✅ Scaricato"
         return downloaded_file
     else:
-        st.session_state.download_progress[track_key] = f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
-        
-        # Assicuriamoci che download_errors sia inizializzato
-        if 'download_errors' not in st.session_state:
-            st.session_state.download_errors = {}
-        
-        st.session_state.download_errors[track_key] = log
+        st.session_state['download_progress'][track_key] = f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
+        st.session_state['download_errors'][track_key] = log
         return None
 
 # 7. Pulizia Risorse - Autopulizia File
@@ -451,15 +443,9 @@ def cleanup_temp_files():
             if now - file_creation_time > TEMP_FILE_RETENTION:
                 try:
                     os.remove(filepath)
-                    st.session_state.log_messages.append(f"🗑️ File temporaneo eliminato: {filename}")
+                    st.session_state['log_messages'].append(f"🗑️ File temporaneo eliminato: {filename}")
                 except Exception as e:
-                    st.session_state.log_messages.append(f"⚠️ Errore nell'eliminazione di {filename}: {e}")
-
-# 7. Pulizia Risorse - Gestione Memoria (semplice, la cache di Streamlit è gestita da Streamlit)
-def manage_cache_size():
-    # La cache di st.cache_data ha una gestione implicita,
-    # per cache più complesse si dovrebbe implementare una logica di rimozione (LRU, LFU, ecc.)
-    pass
+                    st.session_state['log_messages'].append(f"⚠️ Errore nell'eliminazione di {filename}: {e}")
 
 # Miglioramento della gestione degli errori di Selenium
 def safe_browser_quit(browser):
@@ -471,19 +457,19 @@ def safe_browser_quit(browser):
 
 def cleanup_browser_pool():
     if 'browser_pool' in st.session_state:
-        for browser in st.session_state.browser_pool:
+        for browser in st.session_state['browser_pool']:
             safe_browser_quit(browser)
-        st.session_state.browser_pool = []
+        st.session_state['browser_pool'] = []
 
 # Funzione per chiudere correttamente tutti i browser nel pool
 def close_all_browsers():
     if 'browser_pool' in st.session_state:
-        for browser in st.session_state.browser_pool:
+        for browser in st.session_state['browser_pool']:
             try:
                 browser.quit()
             except Exception as e:
-                st.session_state.log_messages.append(f"Errore nella chiusura del browser: {str(e)}")
-        st.session_state.browser_pool = []
+                st.session_state['log_messages'].append(f"Errore nella chiusura del browser: {str(e)}")
+        st.session_state['browser_pool'] = []
 
 # Registra la funzione di pulizia da eseguire all'uscita
 import atexit
@@ -499,20 +485,20 @@ st.warning("⚠️ Prima di scaricare, assicurati di rispettare le leggi sul cop
 use_proxy = st.sidebar.checkbox("Usa Proxy", False)
 
 # Carica i servizi disponibili
-if not st.session_state.servizi_disponibili:
+if not st.session_state['servizi_disponibili']:
     with st.spinner("Caricamento servizi disponibili..."):
         temp_browser = create_browser_instance(use_proxy)
-        st.session_state.servizi_disponibili = get_available_services(temp_browser)
+        st.session_state['servizi_disponibili'] = get_available_services(temp_browser)
         return_browser_to_pool(temp_browser)
-    if st.session_state.servizi_disponibili:
-        st.success(f"Caricati {len(st.session_state.servizi_disponibili)} servizi disponibili.")
+    if st.session_state['servizi_disponibili']:
+        st.success(f"Caricati {len(st.session_state['servizi_disponibili'])} servizi disponibili.")
     else:
         st.warning("Impossibile caricare i servizi disponibili.")
 
 # Preferenze di download
 st.subheader("Preferenze di download")
-if st.session_state.servizi_disponibili:
-    servizio_opzioni = {f"{s['text']} (Servizio {s['index']})": s['index'] for s in st.session_state.servizi_disponibili}
+if st.session_state['servizi_disponibili']:
+    servizio_opzioni = {f"{s['text']} (Servizio {s['index']})": s['index'] for s in st.session_state['servizi_disponibili']}
     servizio_selezionato = st.selectbox("Servizio preferito", options=list(servizio_opzioni.keys()), index=0)
     servizio_indice = servizio_opzioni[servizio_selezionato]
 else:
@@ -571,19 +557,19 @@ if tracks_to_download:
     st.dataframe(tracks_to_download)
 
 # 8. Notifiche e Feedback (implementazione semplice via Streamlit)
-if 'downloaded_files' in st.session_state and st.session_state.downloaded_files and st.session_state.get('download_started', False):
+if 'downloaded_files' in st.session_state and st.session_state['downloaded_files'] and st.session_state.get('download_started', False):
     st.balloons()
-    st.success(f"🎉 Download completato! {len(st.session_state.downloaded_files)} tracce scaricate con successo.")
+    st.success(f"🎉 Download completato! {len(st.session_state['downloaded_files'])} tracce scaricate con successo.")
     st.session_state['download_started'] = False
 
 if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
     st.session_state['download_started'] = True
-    st.session_state.downloaded_files = []
-    st.session_state.log_messages = []
-    st.session_state.pending_tracks = []
+    st.session_state['downloaded_files'] = []
+    st.session_state['log_messages'] = []
+    st.session_state['pending_tracks'] = []
     # Explicitly initialize download_progress here
-    st.session_state.download_progress = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
-    st.session_state.download_errors = {}
+    st.session_state['download_progress'] = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
+    st.session_state['download_errors'] = {}
     progress_bar = st.progress(0)
     num_tracks = len(tracks_to_download)
     downloaded_count = 0
@@ -598,29 +584,29 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
             track = tracks_to_download[i]
             track_key = f"{track.get('artist', '')} - {track.get('title', '')}"
             if downloaded_file:
-                st.session_state.downloaded_files.append(downloaded_file)
-                st.session_state.pending_tracks = [t for t in st.session_state.pending_tracks if t != track_key]
+                st.session_state['downloaded_files'].append(downloaded_file)
+                st.session_state['pending_tracks'] = [t for t in st.session_state['pending_tracks'] if t != track_key]
                 downloaded_count += 1
             else:
-                if track_key not in st.session_state.pending_tracks:
-                    st.session_state.pending_tracks.append(track_key)
+                if track_key not in st.session_state['pending_tracks']:
+                    st.session_state['pending_tracks'].append(track_key)
             progress_bar.progress((i + 1) / num_tracks)
 
     st.write("### Stato Download Tracce:")
-    for track_key, status in st.session_state.download_progress.items():
+    for track_key, status in st.session_state['download_progress'].items():
         st.write(f"- {track_key}: {status}")
 
     st.write("### Riepilogo Download")
     st.write(f"**Totale tracce:** {num_tracks}")
     st.write(f"**Scaricate con successo:** {downloaded_count}")
-    st.write(f"**Tracce non scaricate:** {len(st.session_state.pending_tracks)}")
-    if st.session_state.pending_tracks:
+    st.write(f"**Tracce non scaricate:** {len(st.session_state['pending_tracks'])}")
+    if st.session_state['pending_tracks']:
         st.write("**Elenco tracce non scaricate:**")
-        for track_key in st.session_state.pending_tracks:
+        for track_key in st.session_state['pending_tracks']:
             st.write(f"- {track_key}")
-        if st.session_state.download_errors:
+        if st.session_state['download_errors']:
             with st.expander("Dettagli errori download"):
-                for track_key, errors in st.session_state.download_errors.items():
+                for track_key, errors in st.session_state['download_errors'].items():
                     st.write(f"**{track_key}:**")
                     for error in errors:
                         st.write(f"- {error}")
@@ -645,7 +631,7 @@ if st.sidebar.button("Pulisci Sessione"):
 with st.sidebar.expander("Impostazioni Avanzate"):
     # Opzione per forzare il ricaricamento dei servizi
     if st.button("Ricarica Servizi"):
-        st.session_state.servizi_disponibili = []
+        st.session_state['servizi_disponibili'] = []
         st.rerun()
 
     # Opzione per visualizzare il log completo
@@ -660,9 +646,9 @@ if st.sidebar.checkbox("Modalità Sorpresa?"):
     st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
 
 # Ulteriore feedback visivo durante il download
-if 'download_progress' in st.session_state and st.session_state.download_progress:
+if 'download_progress' in st.session_state and st.session_state['download_progress']:
     st.subheader("Stato Download Dettagliato")
-    for track, status in st.session_state.download_progress.items():
+    for track, status in st.session_state['download_progress'].items():
         if "In corso" in status:
             st.info(f"⏳ {track}: {status}")
         elif "✅ Scaricato" in status:
