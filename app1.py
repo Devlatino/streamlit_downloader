@@ -20,6 +20,46 @@ import json
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
+# Add these functions to your code:
+
+import threading
+from queue import Queue
+
+# Thread-safe counter
+download_counter = 0
+counter_lock = threading.Lock()
+
+# Global variables to replace session state in threads
+user_agent_index = 0
+proxy_index = 0
+user_agent_lock = threading.Lock()
+proxy_lock = threading.Lock()
+
+# Thread-safe function to get next user agent
+def get_thread_safe_user_agent():
+    global user_agent_index
+    with user_agent_lock:
+        user_agent = USER_AGENTS[user_agent_index % len(USER_AGENTS)]
+        user_agent_index += 1
+        return user_agent
+
+# Thread-safe function to get next proxy
+def get_thread_safe_proxy():
+    global proxy_index
+    if not PROXY_LIST:
+        return None
+    with proxy_lock:
+        proxy = PROXY_LIST[proxy_index % len(PROXY_LIST)]
+        proxy_index += 1
+        return proxy
+
+# Function to increment download counter
+def increment_download_count():
+    global download_counter
+    with counter_lock:
+        download_counter += 1
+        return download_counter
+
 
 
 # 1. Sicurezza e Conformità Legale
@@ -91,7 +131,8 @@ def get_next_proxy():
     return None
 
 # Configura le opzioni di Chrome
-def get_chrome_options(use_proxy=False):
+# Replace your get_chrome_options function with this one:
+def get_thread_safe_chrome_options(use_proxy=False):
     options = webdriver.ChromeOptions()
     prefs = {
         "download.default_directory": download_dir,
@@ -107,23 +148,28 @@ def get_chrome_options(use_proxy=False):
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-popup-blocking")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument(f"user-agent={get_next_user_agent()}")
-    proxy = get_next_proxy()
-    if use_proxy and proxy:
+    options.add_argument(f"user-agent={get_thread_safe_user_agent()}")
+    
+    proxy = get_thread_safe_proxy() if use_proxy else None
+    if proxy:
         options.add_argument(f"--proxy-server={proxy}")
     return options
 
+
 # Funzione per creare una nuova istanza del browser
-def create_browser_instance(use_proxy=False):
+# Replace your create_browser_instance function with:
+def create_thread_safe_browser_instance(use_proxy=False):
     try:
-        return webdriver.Chrome(options=get_chrome_options(use_proxy))
+        return webdriver.Chrome(options=get_thread_safe_chrome_options(use_proxy))
     except Exception as e:
-        st.error(f"Errore nella creazione del browser: {str(e)}")
+        print(f"Errore nella creazione del browser: {str(e)}")
         try:
-            return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=get_chrome_options(use_proxy))
+            return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), 
+                                   options=get_thread_safe_chrome_options(use_proxy))
         except Exception as e2:
-            st.error(f"Secondo tentativo fallito: {str(e2)}")
+            print(f"Secondo tentativo fallito: {str(e2)}")
             raise
+
 
 # 3. Ottimizzazione Performance - Browser Pool
 def get_browser_from_pool(use_proxy=False):
@@ -282,7 +328,8 @@ def log_error(message):
     st.session_state['log_messages'].append(f"🔴 {message}")
 
 # Funzione principale per scaricare una traccia
-def _download_single_track_with_browser(browser, track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
+def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
+    track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
     log = []
     downloaded_file = None
     success = False
@@ -291,25 +338,53 @@ def _download_single_track_with_browser(browser, track_info, servizio_idx, forma
     search_query = f"{artist} - {title}" if artist else title
     expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
 
+    # Create a browser instance specifically for this thread
+    browser = None
+    
     try:
+        browser = create_thread_safe_browser_instance(use_proxy)
+        
         log.append(f"🎤 Artista: {artist} | 🎵 Traccia: {title}")
-        if use_proxy and get_next_proxy():
-            log.append(f"🌐 Utilizzo proxy: {get_next_proxy()}")
+        if use_proxy:
+            proxy = get_thread_safe_proxy()
+            log.append(f"🌐 Utilizzo proxy: {proxy}" if proxy else "🌐 Nessun proxy configurato.")
         else:
             log.append("🌐 Nessun proxy configurato.")
 
         browser.get("https://lucida.su")
         log.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
         time.sleep(random.uniform(2, 5))
-        
-        # ... rest of the function remains the same ...
-    
+
+        # Rest of your download code
+        input_field = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "download")))
+        input_field.clear()
+        input_field.send_keys(search_query)
+        time.sleep(random.uniform(1, 3))
+        log.append("✍️ Campo input compilato")
+
+        # Continue with the rest of your function...
+        # [Your existing code for downloading]
+
     except Exception as e:
         error_msg = f"Errore durante il download di '{title}': {str(e)}"
         log.append(f"❌ {error_msg}")
         success = False
-    
-    return success, downloaded_file, log
+    finally:
+        # Clean up browser
+        if browser:
+            try:
+                browser.quit()
+            except Exception as e:
+                log.append(f"Errore nella chiusura del browser: {str(e)}")
+
+    return {
+        "track_key": track_key,
+        "success": success,
+        "downloaded_file": downloaded_file,
+        "log": log,
+        "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
+    }
+
 
 # Teniamo traccia dello stato localmente per ciascun thread
 def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
@@ -471,9 +546,10 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     st.session_state['downloaded_files'] = []
     st.session_state['log_messages'] = []
     st.session_state['pending_tracks'] = []
-    # Inizializziamo il dizionario di stato per tutte le tracce
+    
+    # Initialize the state dictionary for all tracks
     track_status = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
-    # Aggiorniamo lo stato della sessione una sola volta, non per ogni thread
+    # Update session state once, not for each thread
     st.session_state['download_progress'] = track_status.copy()
     st.session_state['download_errors'] = {}
     
@@ -481,26 +557,26 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     num_tracks = len(tracks_to_download)
     downloaded_count = 0
     
-    # Contenitore per i risultati del download
+    # Container for download results
     download_results_container = st.container()
     with download_results_container.container():
         status_placeholder = st.empty()
         
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-    # Start all downloads
+        # Start all downloads using the thread-safe function
         futures = [executor.submit(
-        download_track_wrapper, 
-        track, servizio_indice, formato_valore, qualita_valore, use_proxy
-    ) for track in tracks_to_download]
-    
-        # Mostriamo lo stato durante il download
+            download_track_thread_safe, 
+            track, servizio_indice, formato_valore, qualita_valore, use_proxy
+        ) for track in tracks_to_download]
+        
+        # Show status during download
         pending_futures = list(futures)
         downloaded_files = []
         pending_tracks = []
         download_errors = {}
         
         while pending_futures:
-            # Aggiorniamo lo stato visivamente
+            # Update status visually
             status_text = "<h3>Stato Download in corso:</h3>"
             for track_key, status in track_status.items():
                 status_class = ""
@@ -514,20 +590,20 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
             
             status_placeholder.markdown(status_text, unsafe_allow_html=True)
             
-            # Controlliamo i download completati
+            # Check completed downloads
             done, pending_futures = concurrent.futures.wait(
                 pending_futures, 
                 timeout=0.5,
                 return_when=concurrent.futures.FIRST_COMPLETED
             )
             
-            # Elaboriamo i download completati
+            # Process completed downloads
             for future in done:
                 try:
                     result = future.result()
                     track_key = result["track_key"]
                     
-                    # Aggiorniamo lo stato locale
+                    # Update local state
                     track_status[track_key] = result["status"]
                     
                     if result["success"] and result["downloaded_file"]:
@@ -537,18 +613,19 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
                         pending_tracks.append(track_key)
                         download_errors[track_key] = result["log"]
                     
-                    # Aggiorniamo la progress bar
+                    # Update progress bar
                     progress_value = (len(tracks_to_download) - len(pending_futures)) / num_tracks
                     progress_bar.progress(progress_value)
                 
                 except Exception as e:
                     st.error(f"Errore nel processare i risultati del download: {str(e)}")
-        
-        # Aggiorniamo lo stato della sessione alla fine
+
+        # Update session state at the end
         st.session_state['downloaded_files'] = downloaded_files
         st.session_state['pending_tracks'] = pending_tracks
         st.session_state['download_errors'] = download_errors
         st.session_state['download_progress'] = track_status
+
 
     # Stato finale
     status_text = "<h3>Stato Download Finale:</h3>"
