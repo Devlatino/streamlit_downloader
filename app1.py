@@ -235,7 +235,12 @@ def split_title(full_title):
 def normalize_artist(artist_string):
     if not artist_string:
         return ""
-    return artist_string.split(',')[0].strip().lower()
+    # Normalizza l'artista: rimuovi spazi extra, converti in minuscolo
+    normalized = artist_string.split(',')[0].strip().lower()
+    # Gestisci le varianti comuni come "and", "&", "e"
+    normalized = normalized.replace(" & ", " and ").replace(" e ", " and ")
+    return normalized
+
 
 # 2. Gestione degli Errori Migliorata - Controllo File Corrotti
 def is_file_complete(filepath, expected_extension):
@@ -446,10 +451,22 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         time.sleep(1)
         
         # Click "go"
-        go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
         go_button.click()
         log_messages.append("▶️ Pulsante 'go' cliccato")
-        time.sleep(5)
+
+# Attendi in modo più affidabile che i risultati siano caricati
+        try:
+            WebDriverWait(browser, 15).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
+                 "No results found" in d.page_source
+            )
+            log_messages.append("🔍 Risultati caricati con successo")
+        except Exception as e:
+            log_messages.append(f"⚠️ Timeout nell'attesa dei risultati: {str(e)}")
+
+# Attendi comunque un po' di tempo dopo il caricamento per sicurezza
+            time.sleep(3)
+
         
         # Search for results
         WebDriverWait(browser, 60).until(
@@ -460,29 +477,54 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
         
         # Find the best match
+       # Find the best match
         best_match_found = False
         for i, titolo in enumerate(titoli):
+    # Rimuovi gli spazi extra all'inizio e alla fine
             titolo_testo = titolo.text.strip().lower()
-            traccia_testo = traccia_input.lower()
-            parole_traccia = set(traccia_testo.split())
-            parole_titolo = set(titolo_testo.split())
+            traccia_testo = traccia_input.lower().strip()
+    
+    # Normalizza i titoli per confronto
+            titolo_normalizzato = titolo_testo.strip()
+            traccia_normalizzata = traccia_testo.strip()
+    
+    # Calcola match standard
+            parole_traccia = set(traccia_normalizzata.split())
+            parole_titolo = set(titolo_normalizzato.split())
             match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
-            
-            log_messages.append(f"🔍 Confronto: '{traccia_testo}' con '{titolo_testo}' (Match: {match:.2%})")
-            if match >= 0.7 or traccia_testo in titolo_testo:
+    
+            log_messages.append(f"🔍 Confronto: '{traccia_normalizzata}' con '{titolo_normalizzato}' (Match: {match:.2%})")
+    
+    # Confronto più flessibile (abbassata soglia a 0.6)
+            if match >= 0.6 or traccia_normalizzata in titolo_normalizzato:
+        # Verifica anche l'artista, ma in modo più flessibile
                 if artista_input and i < len(artisti):
-                    artista_normalizzato = normalize_artist(artista_input)
                     artista_risultato = artisti[i].text.strip().lower()
-                    if artista_normalizzato and artista_normalizzato not in artista_risultato and match < 0.9:
+                    artista_normalizzato = normalize_artist(artista_input)
+            
+            # Normalizzazione speciale per confrontare "and" e "&"
+                    artista_normalizzato_and = artista_normalizzato.replace("&", "and")
+                    artista_normalizzato_e = artista_normalizzato.replace("&", "e")
+            
+            # Controlla diverse varianti dell'artista
+                    artist_match = (
+                        artista_normalizzato in artista_risultato or
+                        artista_normalizzato_and in artista_risultato or
+                        artista_normalizzato_e in artista_risultato or
+                        artista_risultato in artista_normalizzato
+                    )
+            
+                    if not artist_match and match < 0.8:  # Soglia più permissiva
                         log_messages.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
                         continue
-                
+        
                 browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
                 time.sleep(1)
                 titolo.click()
-                log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_testo}'")
+                log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_normalizzato}'")
                 best_match_found = True
                 break
+
         
         if not best_match_found:
             log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
