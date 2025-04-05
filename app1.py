@@ -450,9 +450,23 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
         time.sleep(1)
         
-        # Click "go"
-        go_button.click()
-        log_messages.append("▶️ Pulsante 'go' cliccato")
+        
+go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
+go_button.click()
+log_messages.append("▶️ Pulsante 'go' cliccato")
+
+# Attendi in modo più affidabile che i risultati siano caricati
+try:
+    WebDriverWait(browser, 15).until(
+        lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
+                 "No results found" in d.page_source
+    )
+    log_messages.append("🔍 Risultati caricati con successo")
+except Exception as e:
+    log_messages.append(f"⚠️ Timeout nell'attesa dei risultati: {str(e)}")
+
+# Attendi comunque un po' di tempo dopo il caricamento per sicurezza
+time.sleep(3)
 
 # Attendi in modo più affidabile che i risultati siano caricati
         try:
