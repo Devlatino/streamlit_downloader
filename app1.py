@@ -468,41 +468,6 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         # Attendi comunque un po' di tempo dopo il caricamento per sicurezza
         time.sleep(3)
         
-        # Select country
-        WebDriverWait(browser, 60).until(lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0)
-        select_country = Select(browser.find_element(By.ID, "country"))
-        if not select_country.options:
-            log_messages.append(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
-            return {
-                "track_key": track_key,
-                "success": False,
-                "downloaded_file": None,
-                "log": log_messages,
-                "status": f"❌ Errore: Nessuna opzione paese"
-            }
-        select_country.select_by_index(0)
-        log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
-        time.sleep(1)
-        
-go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
-go_button.click()
-log_messages.append("▶️ Pulsante 'go' cliccato")
-
-# Attendi in modo più affidabile che i risultati siano caricati
-try:
-    WebDriverWait(browser, 15).until(
-        lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
-                 "No results found" in d.page_source
-    )
-    log_messages.append("🔍 Risultati caricati con successo")
-except Exception as e:
-    log_messages.append(f"⚠️ Timeout nell'attesa dei risultati: {str(e)}")
-
-# Attendi comunque un po' di tempo dopo il caricamento per sicurezza
-time.sleep(3)
-
-
-        
         # Search for results
         WebDriverWait(browser, 60).until(
             lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
@@ -512,36 +477,35 @@ time.sleep(3)
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
         
         # Find the best match
-       # Find the best match
         best_match_found = False
         for i, titolo in enumerate(titoli):
-    # Rimuovi gli spazi extra all'inizio e alla fine
+            # Rimuovi gli spazi extra all'inizio e alla fine
             titolo_testo = titolo.text.strip().lower()
             traccia_testo = traccia_input.lower().strip()
     
-    # Normalizza i titoli per confronto
+            # Normalizza i titoli per confronto
             titolo_normalizzato = titolo_testo.strip()
             traccia_normalizzata = traccia_testo.strip()
     
-    # Calcola match standard
+            # Calcola match standard
             parole_traccia = set(traccia_normalizzata.split())
             parole_titolo = set(titolo_normalizzato.split())
             match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
     
             log_messages.append(f"🔍 Confronto: '{traccia_normalizzata}' con '{titolo_normalizzato}' (Match: {match:.2%})")
     
-    # Confronto più flessibile (abbassata soglia a 0.6)
+            # Confronto più flessibile (abbassata soglia a 0.6)
             if match >= 0.6 or traccia_normalizzata in titolo_normalizzato:
-        # Verifica anche l'artista, ma in modo più flessibile
+                # Verifica anche l'artista, ma in modo più flessibile
                 if artista_input and i < len(artisti):
                     artista_risultato = artisti[i].text.strip().lower()
                     artista_normalizzato = normalize_artist(artista_input)
             
-            # Normalizzazione speciale per confrontare "and" e "&"
+                    # Normalizzazione speciale per confrontare "and" e "&"
                     artista_normalizzato_and = artista_normalizzato.replace("&", "and")
                     artista_normalizzato_e = artista_normalizzato.replace("&", "e")
             
-            # Controlla diverse varianti dell'artista
+                    # Controlla diverse varianti dell'artista
                     artist_match = (
                         artista_normalizzato in artista_risultato or
                         artista_normalizzato_and in artista_risultato or
@@ -622,7 +586,6 @@ time.sleep(3)
                 browser.quit()
             except Exception:
                 pass
-
 
 # Teniamo traccia dello stato localmente per ciascun thread
 def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
