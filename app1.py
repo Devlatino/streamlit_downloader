@@ -450,6 +450,40 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
         time.sleep(1)
         
+        # Clicca sul pulsante "go"
+        go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
+        go_button.click()
+        log_messages.append("▶️ Pulsante 'go' cliccato")
+
+        # Attendi in modo più affidabile che i risultati siano caricati
+        try:
+            WebDriverWait(browser, 15).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
+                         "No results found" in d.page_source
+            )
+            log_messages.append("🔍 Risultati caricati con successo")
+        except Exception as e:
+            log_messages.append(f"⚠️ Timeout nell'attesa dei risultati: {str(e)}")
+
+        # Attendi comunque un po' di tempo dopo il caricamento per sicurezza
+        time.sleep(3)
+        
+        # Select country
+        WebDriverWait(browser, 60).until(lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0)
+        select_country = Select(browser.find_element(By.ID, "country"))
+        if not select_country.options:
+            log_messages.append(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: Nessuna opzione paese"
+            }
+        select_country.select_by_index(0)
+        log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
+        time.sleep(1)
+        
 go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
 go_button.click()
 log_messages.append("▶️ Pulsante 'go' cliccato")
