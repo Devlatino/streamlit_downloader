@@ -906,6 +906,150 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         
     status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
+    # Add to the existing code after the download process completes
+
+    # Auto-retry functionality for failed tracks
+    if st.session_state.get('pending_tracks') and not st.checkbox("Skip auto-retry", value=False):
+        st.info(f"🔄 Trovate {len(st.session_state['pending_tracks'])} tracce non scaricate. Tentativo automatico di recupero in corso...")
+    
+        # Prepare tracks for retry
+        retry_tracks = []
+        for track_key in st.session_state['pending_tracks']:
+            # Convert track_key back to a track object
+            parts = track_key.split(" - ", 1)
+            if len(parts) == 2:
+                retry_tracks.append({"artist": parts[0].strip(), "title": parts[1].strip()})
+            else:
+                retry_tracks.append({"artist": "", "title": track_key.strip()})
+    
+        # Attempt with a different service
+        alternative_service = None
+        available_services = st.session_state['servizi_disponibili']
+    
+        # Find an alternative service
+        if len(available_services) > 1:
+            # Use a different service than the current one
+            for service in available_services:
+                if service["index"] != servizio_indice:
+                    alternative_service = service["index"]
+                    break
+    
+        if alternative_service is None:
+            alternative_service = servizio_indice  # Use the same service if no alternative
+        else:
+            st.info(f"🔄 Tentativo con servizio alternativo (Servizio {alternative_service})")
+
+        # Track retry progress
+        retry_progress_bar = st.progress(0)
+        retry_status_container = st.container()
+    
+        # Initialize retry tracking
+        retry_status = {track["artist"] + " - " + track["title"]: "In attesa..." for track in retry_tracks}
+        retry_downloaded_files = []
+        retry_pending_tracks = []
+        retry_errors = {}
+    
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as retry_executor:
+            retry_futures = [
+                retry_executor.submit(
+                    download_track_thread_safe, 
+                    track, alternative_service, formato_valore, qualita_valore, use_proxy
+                ) 
+                for track in retry_tracks
+            ]
+        
+            # Show status during retry
+            pending_retry_futures = list(retry_futures)
+            retry_downloaded_count = 0
+        
+            with retry_status_container:
+                retry_status_placeholder = st.empty()
+            
+            while pending_retry_futures:
+                # Update retry status visually
+                retry_status_text = "<h3>Stato Recupero in corso:</h3>"
+                for track_key, status in retry_status.items():
+                    status_class = ""
+                    if "In corso" in status or "In attesa" in status:
+                        status_class = "info"
+                    elif "✅ Scaricato" in status:
+                        status_class = "success"
+                    elif "❌ Errore" in status:
+                        status_class = "error"
+                    retry_status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+            
+                retry_status_placeholder.markdown(retry_status_text, unsafe_allow_html=True)
+            
+                # Check completed retries
+                done_retries, pending_retry_futures = concurrent.futures.wait(
+                    pending_retry_futures, 
+                    timeout=0.5,
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
+            
+                # Process completed retries
+                for future in done_retries:
+                    try:
+                        result = future.result()
+                        track_key = result["track_key"]
+                    
+                        # Update status
+                        retry_status[track_key] = result["status"]
+                    
+                        if result["success"] and result["downloaded_file"]:
+                            retry_downloaded_files.append(result["downloaded_file"])
+                            retry_downloaded_count += 1
+                        else:
+                            retry_pending_tracks.append(track_key)
+                            retry_errors[track_key] = result["log"]
+                    
+                        # Update progress bar
+                        retry_progress_value = (len(retry_tracks) - len(pending_retry_futures)) / len(retry_tracks)
+                        retry_progress_bar.progress(retry_progress_value)
+                
+                    except Exception as e:
+                        st.error(f"Errore nel processare i risultati del recupero: {str(e)}")
+
+    # Update the main download results with retry results
+    st.session_state['downloaded_files'].extend(retry_downloaded_files)
+    st.session_state['pending_tracks'] = retry_pending_tracks
+    
+    # Update download errors with retry errors
+    for track_key, errors in retry_errors.items():
+        st.session_state['download_errors'][track_key] = errors
+    
+    # Update final status
+    for track_key, status in retry_status.items():
+        st.session_state['download_progress'][track_key] = status
+    
+    # Show final retry results
+    st.write("### Riepilogo Recupero")
+    st.write(f"**Tracce recuperate:** {retry_downloaded_count} / {len(retry_tracks)}")
+    
+    # Show final overall results
+    st.write("### Riepilogo Complessivo")
+    st.write(f"**Totale tracce:** {num_tracks}")
+    st.write(f"**Scaricate con successo:** {downloaded_count + retry_downloaded_count}")
+    st.write(f"**Tracce non recuperabili:** {len(retry_pending_tracks)}")
+    
+    if retry_downloaded_count > 0:
+        st.success(f"🎉 Recupero completato! Recuperate {retry_downloaded_count} tracce aggiuntive.")
+        if retry_downloaded_count == len(retry_tracks):
+            st.balloons()
+    
+    # If there are still pending tracks, show them
+    if retry_pending_tracks:
+        st.write("**Elenco tracce non recuperabili:**")
+        for track_key in retry_pending_tracks:
+            st.write(f"- {track_key}")
+        
+        with st.expander("Dettagli errori recupero"):
+            for track_key, errors in retry_errors.items():
+                st.write(f"**{track_key}:**")
+                for error in errors:
+                    st.write(f"- {error}")
+
+
     st.write("### Riepilogo Download")
     st.write(f"**Totale tracce:** {num_tracks}")
     st.write(f"**Scaricate con successo:** {downloaded_count}")
