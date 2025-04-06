@@ -577,84 +577,84 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 f"Match score: {match['match_score']:.2f} - {match['artist_info']}"
             )
         
-         if best_match_idx is not None:
-            browser.execute_script("arguments[0].scrollIntoView(true);", titoli[best_match_idx])
-            time.sleep(1)
-            titoli[best_match_idx].click()
-            selected_title = titoli[best_match_idx].text.strip()
-            selected_artist = artisti[best_match_idx].text.strip() if best_match_idx < len(artisti) else ""
-            log_messages.append(f"✅ Traccia selezionata: '{selected_title}' di '{selected_artist}' con indice {best_match_idx}")
-        else:
-            log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
-            return {
-                "track_key": track_key,
-                "success": False,
-                "downloaded_file": None,
-                "log": log_messages,
-                "status": "❌ Errore: Traccia non trovata"
-            }
-
-        # Selezione del formato
-        select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
-        select_convert.select_by_value(formato_valore)
-        log_messages.append(f"🎧 Formato selezionato: {formato_valore}")
-        time.sleep(1)
-
-        # Selezione della qualità (solo se richiesta dal formato)
-        if formato_valore not in ["wav", "original", "bitcrush"]:  # Formati senza downsetting
-            select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
-            try:
-                select_downsetting.select_by_value(qualita_valore)
-                log_messages.append(f"🔊 Qualità selezionata: {qualita_valore}")
-            except Exception as e:
-                log_messages.append(f"⚠️ Errore selezione qualità: {str(e)} - Opzioni disponibili: {[opt.get_attribute('value') for opt in select_downsetting.options]}")
+             if best_match_idx is not None:
+                browser.execute_script("arguments[0].scrollIntoView(true);", titoli[best_match_idx])
+                time.sleep(1)
+                titoli[best_match_idx].click()
+                selected_title = titoli[best_match_idx].text.strip()
+                selected_artist = artisti[best_match_idx].text.strip() if best_match_idx < len(artisti) else ""
+                log_messages.append(f"✅ Traccia selezionata: '{selected_title}' di '{selected_artist}' con indice {best_match_idx}")
+            else:
+                log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
                 return {
                     "track_key": track_key,
                     "success": False,
                     "downloaded_file": None,
                     "log": log_messages,
-                    "status": f"❌ Errore: Qualità non valida per {formato_valore}"
+                    "status": "❌ Errore: Traccia non trovata"
                 }
-        else:
-            log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
-        time.sleep(1)
 
-        # Avvio del download
-        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
-        download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
-        browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
-        time.sleep(1)
-        download_button.click()
-        log_messages.append("⬇️ Pulsante di download cliccato")
+            # Selezione del formato
+            select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
+            select_convert.select_by_value(formato_valore)
+            log_messages.append(f"🎧 Formato selezionato: {formato_valore}")
+            time.sleep(1)
 
-        # Attesa del download (adattiamo l'estensione in base al formato)
-        expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
-        success, message, downloaded_file = wait_for_download(download_dir, existing_files, expected_extension)
-        log_messages.append(message)
-        return {
-            "track_key": track_key,
-            "success": success,
-            "downloaded_file": downloaded_file,
-            "log": log_messages,
-            "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
-        }
+            # Selezione della qualità (solo se richiesta dal formato)
+            if formato_valore not in ["wav", "original", "bitcrush"]:  # Formati senza downsetting
+                select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
+                try:
+                    select_downsetting.select_by_value(qualita_valore)
+                    log_messages.append(f"🔊 Qualità selezionata: {qualita_valore}")
+                except Exception as e:
+                    log_messages.append(f"⚠️ Errore selezione qualità: {str(e)} - Opzioni disponibili: {[opt.get_attribute('value') for opt in select_downsetting.options]}")
+                     return {
+                        "track_key": track_key,
+                        "success": False,
+                        "downloaded_file": None,
+                        "log": log_messages,
+                        "status": f"❌ Errore: Qualità non valida per {formato_valore}"
+                    }
+            else:
+                log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
+            time.sleep(1)
 
-    except Exception as e:
-        error_message = f"❌ Errore durante il download: {str(e)}"
-        log_messages.append(error_message)
-        return {
-            "track_key": track_key,
-            "success": False,
-            "downloaded_file": None,
-            "log": log_messages,
-            "status": f"❌ Errore: {str(e)}"
-        }
-    finally:
-        if browser:
-            try:
-                browser.quit()
-            except Exception:
-                pass
+            # Avvio del download
+            existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
+            download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
+            browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
+            time.sleep(1)
+            download_button.click()
+            log_messages.append("⬇️ Pulsante di download cliccato")
+
+            # Attesa del download (adattiamo l'estensione in base al formato)
+            expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
+            success, message, downloaded_file = wait_for_download(download_dir, existing_files, expected_extension)
+            log_messages.append(message)
+            return {
+                "track_key": track_key,
+                "success": success,
+                "downloaded_file": downloaded_file,
+                "log": log_messages,
+                "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
+            }
+
+        except Exception as e:
+            error_message = f"❌ Errore durante il download: {str(e)}"
+            log_messages.append(error_message)
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: {str(e)}"
+            }
+        finally:
+            if browser:
+                try:
+                    browser.quit()
+                except Exception:
+                    pass
 
 def cleanup_temp_files():
     """Clean up temporary files older than retention period."""
