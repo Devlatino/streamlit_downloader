@@ -782,63 +782,73 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     with download_results_container:
         status_placeholder = st.empty()
 
-    max_attempts = 2  # Numero massimo di tentativi per traccia
+    max_attempts = 2
     for attempt in range(max_attempts):
         pending_tracks = tracks_to_download if attempt == 0 else [t for t in tracks_to_download if f"{t.get('artist', '')} - {t.get('title', '')}" in st.session_state['pending_tracks']]
         if not pending_tracks:
             break
         st.session_state['log_messages'].append(f"📌 Tentativo {attempt + 1} di {max_attempts} per {len(pending_tracks)} tracce")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = {
-                executor.submit(
-                    download_track_thread_safe,
-                    track, servizio_indice, formato_valore, qualita_valore, use_proxy
-                ): track for track in pending_tracks
-            }
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+                futures = {
+                    executor.submit(
+                        download_track_thread_safe,
+                        track, servizio_indice, formato_valore, qualita_valore, use_proxy
+                    ): track for track in pending_tracks
+                }
 
-            downloaded_files = st.session_state['downloaded_files']
-            pending_tracks_keys = []
+                downloaded_files = st.session_state['downloaded_files']
+                pending_tracks_keys = []
 
-            for future in concurrent.futures.as_completed(futures):
-                track = futures[future]
-                track_key = f"{track.get('artist', '')} - {track.get('title', '')}"
-                try:
-                    result = future.result()
-                    track_status[track_key] = result["status"]
-                    st.session_state['log_messages'].extend(result["log"])
+                for future in concurrent.futures.as_completed(futures):
+                    track = futures[future]
+                    track_key = f"{track.get('artist', '')} - {track.get('title', '')}"
+                    try:
+                        result = future.result()
+                        track_status[track_key] = result["status"]
+                        st.session_state['log_messages'].extend(result["log"])
 
-                    if result["success"] and result["downloaded_file"]:
-                        downloaded_files.append(result["downloaded_file"])
-                        downloaded_count += 1
-                        st.session_state['log_messages'].append(f"✅ Traccia scaricata con successo: {track_key} -> {result['downloaded_file']}")
-                    else:
+                        if result["success"] and result["downloaded_file"]:
+                            downloaded_files.append(result["downloaded_file"])
+                            downloaded_count += 1
+                            st.session_state['log_messages'].append(f"✅ Traccia scaricata con successo: {track_key} -> {result['downloaded_file']}")
+                        else:
+                            pending_tracks_keys.append(track_key)
+                            st.session_state['download_errors'][track_key] = result["log"]
+                            st.session_state['log_messages'].append(f"❌ Traccia fallita: {track_key}")
+
+                        progress_value = downloaded_count / num_tracks
+                        progress_bar.progress(progress_value)
+
+                    except Exception as e:
+                        track_status[track_key] = f"❌ Errore: {str(e)}"
                         pending_tracks_keys.append(track_key)
-                        st.session_state['download_errors'][track_key] = result["log"]
-                        st.session_state['log_messages'].append(f"❌ Traccia fallita: {track_key}")
+                        st.session_state['download_errors'][track_key] = [f"Errore durante l'elaborazione: {str(e)}"]
+                        st.session_state['log_messages'].append(f"❌ Errore critico per {track_key}: {str(e)}")
 
-                    progress_value = downloaded_count / num_tracks
-                    progress_bar.progress(progress_value)
+                    status_text = "<h3>Stato Download in corso:</h3>"
+                    for tk, status in track_status.items():
+                        status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
+                        status_text += f"<div class='{status_class}'>{tk}: {status}</div>"
+                    status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
-                except Exception as e:
-                    track_status[track_key] = f"❌ Errore: {str(e)}"
-                    pending_tracks_keys.append(track_key)
-                    st.session_state['download_errors'][track_key] = [f"Errore durante l'elaborazione: {str(e)}"]
-                    st.session_state['log_messages'].append(f"❌ Errore critico per {track_key}: {str(e)}")
+                st.session_state['downloaded_files'] = downloaded_files
+                st.session_state['pending_tracks'] = pending_tracks_keys
+                st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
+                for file in downloaded_files:
+                    st.session_state['log_messages'].append(f" - {file}")
 
-                status_text = "<h3>Stato Download in corso:</h3>"
-                for tk, status in track_status.items():
-                    status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
-                    status_text += f"<div class='{status_class}'>{tk}: {status}</div>"
-                status_placeholder.markdown(status_text, unsafe_allow_html=True)
+        except Exception as e:
+            st.session_state['log_messages'].append(f"❌ Errore durante l'esecuzione dei thread: {str(e)}")
+            break
 
-            st.session_state['downloaded_files'] = downloaded_files
-            st.session_state['pending_tracks'] = pending_tracks_keys
-            st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
-            for file in downloaded_files:
-                st.session_state['log_messages'].append(f" - {file}")
+    # Stato finale e log
+    if st.session_state.get('mostra_log_completo', False):
+        st.subheader("Log Completo")
+        for log_message in st.session_state['log_messages']:
+            st.write(log_message)
 
-   # Stato finale
     status_text = "<h3>Stato Download Finale:</h3>"
     for track_key, status in st.session_state['download_progress'].items():
         status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
@@ -862,29 +872,7 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
                     for error in errors:
                         st.write(f"- {error}")
 
-if st.session_state.get('downloaded_files'):
-    st.subheader("Scarica le tracce")
-    zip_filename = "tracce_scaricate.zip"
-    zip_path = create_zip_archive(st.session_state['downloaded_files'], zip_filename)
-    if zip_path:
-        with open(zip_path, "rb") as f:
-            st.download_button(
-                label="Scarica tutte le tracce come ZIP",
-                data=f,
-                file_name=zip_filename,
-                mime="application/zip"
-            )
-        if st.button("Pulisci file temporanei dopo il download"):
-            cleanup_temp_files()
-            st.session_state['log_messages'].append("🗑️ File temporanei puliti manualmente")
-    else:
-        st.error("Errore nella creazione dell'archivio ZIP.")
-elif st.session_state.get('download_started', False) and not st.session_state.get('downloaded_files'):
-    st.info("Download in corso... Attendi il completamento per scaricare le tracce.")
-elif not tracks_to_download:
-    st.info("Inserisci un link Spotify o carica un file di testo per avviare il download.")
-
-# Sidebar aggiornata
+# Sidebar
 st.sidebar.subheader("Disclaimer")
 st.sidebar.info("""
 Questo strumento è fornito a scopo didattico e per uso personale.
@@ -914,8 +902,10 @@ if st.sidebar.checkbox("Modalità Sorpresa?"):
     st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)")
     st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
 
+st.markdown("---")
+st.info("L'applicazione è stata potenziata con diverse ottimizzazioni e nuove funzionalità. Ulteriori miglioramenti potrebbero essere implementati in futuro.")
 
-# Funzionalità per scaricare un singolo file ZIP
+# Sezione Download (unificata con key univoco)
 if st.session_state.get('downloaded_files'):
     st.subheader("Scarica le tracce")
     zip_filename = "tracce_scaricate.zip"
@@ -926,21 +916,16 @@ if st.session_state.get('downloaded_files'):
                 label="Scarica tutte le tracce come ZIP",
                 data=f,
                 file_name=zip_filename,
-                mime="application/zip"
+                mime="application/zip",
+                key="download_zip_button"  # Aggiunto key univoco
             )
-        if st.button("Pulisci file temporanei dopo il download"):
+        if st.button("Pulisci file temporanei dopo il download", key="cleanup_button"):
             cleanup_temp_files()
             st.session_state['log_messages'].append("🗑️ File temporanei puliti manualmente")
     else:
         st.error("Errore nella creazione dell'archivio ZIP.")
-# Parte finale aggiornata
-if st.session_state.get('download_started', False):
-    # Mostra il log completo se richiesto
-    if st.session_state.get('mostra_log_completo', False):
-        st.subheader("Log Completo")
-        for log_message in st.session_state['log_messages']:
-            st.write(log_message)
-
+elif st.session_state.get('download_started', False) and not st.session_state.get('downloaded_files'):
+    st.info("Download in corso... Attendi il completamento per scaricare le tracce.")
 elif not tracks_to_download:
     st.info("Inserisci un link Spotify o carica un file di testo per avviare il download.")
 
@@ -976,7 +961,7 @@ st.markdown("""
     }
     .error {
         padding: 5px;
-        background-color: #ffebee;
+        background-color: #52020e;
         border-left: 5px solid #f44336;
         margin: 5px 0;
     }
