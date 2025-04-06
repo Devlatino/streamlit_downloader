@@ -387,7 +387,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True
         }
-        options.add_experimental_option("prefs", prefs
+        options.add_experimental_option("prefs", prefs)
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
