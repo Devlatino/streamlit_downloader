@@ -457,7 +457,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
 
         # Attendi in modo più affidabile che i risultati siano caricati
         try:
-            WebDriverWait(browser, 30).until(
+            WebDriverWait(browser, 40).until(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
                          "No results found" in d.page_source
             )
@@ -466,7 +466,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             log_messages.append(f"⚠️ Timeout nell'attesa dei risultati: {str(e)}")
 
         # Attendi comunque un po' di tempo dopo il caricamento per sicurezza
-        time.sleep(10)
+        time.sleep(15)
         
         # Search for results
         WebDriverWait(browser, 60).until(
