@@ -514,20 +514,20 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
         
         # Find the best match
-    best_match_found = False
-    for i, titolo in enumerate(titoli):
-        # Normalize both the search title and the result title
-        titolo_testo = titolo.text.strip()
-        traccia_normalizzata = normalize_track_title(traccia_input)
-        titolo_normalizzato = normalize_track_title(titolo_testo)
+        best_match_found = False
+        for i, titolo in enumerate(titoli):
+            # Normalize both the search title and the result title
+            titolo_testo = titolo.text.strip()
+            traccia_normalizzata = normalize_track_title(traccia_input)
+            titolo_normalizzato = normalize_track_title(titolo_testo)
     
-        # Log the normalized titles for debugging
-        log_messages.append(f"🔍 Confronto normalizzato: '{traccia_normalizzata}' con '{titolo_normalizzato}'")
+            # Log the normalized titles for debugging
+            log_messages.append(f"🔍 Confronto normalizzato: '{traccia_normalizzata}' con '{titolo_normalizzato}'")
     
-        # Calculate match score using normalized titles
-        parole_traccia = set(traccia_normalizzata.split())
-        parole_titolo = set(titolo_normalizzato.split())
-        match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
+            # Calculate match score using normalized titles
+            parole_traccia = set(traccia_normalizzata.split())
+            parole_titolo = set(titolo_normalizzato.split())
+            match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
     
         # More accurate matching using normalized titles
         if match >= 0.6 or traccia_normalizzata in titolo_normalizzato:
