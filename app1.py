@@ -173,7 +173,7 @@ def create_thread_safe_browser_instance(use_proxy=False):
         print(f"Errore nella creazione del browser: {str(e)}")
         try:
             return webdriver.Chrome(service=Service("/usr/bin/chromedriver"),
-                                   options=get_thread_safe_chrome_options(use_proxy))
+                                    options=get_thread_safe_chrome_options(use_proxy))
         except Exception as e2:
             print(f"Secondo tentativo fallito: {str(e2)}")
             raise
@@ -737,7 +737,7 @@ if 'downloaded_files' in st.session_state and st.session_state['downloaded_files
     st.success(f"🎉 Download completato! {len(st.session_state['downloaded_files'])} tracce scaricate con successo.")
     st.session_state['download_started'] = False
 
- if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
+if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
     st.session_state['download_started'] = True
     st.session_state['downloaded_files'] = []
     st.session_state['log_messages'] = []
@@ -810,58 +810,10 @@ if 'downloaded_files' in st.session_state and st.session_state['downloaded_files
         st.session_state['download_errors'] = download_errors
         st.session_state['download_progress'] = track_status
 
+    # Stato finale
     status_text = "<h3>Stato Download Finale:</h3>"
     for track_key, status in st.session_state['download_progress'].items():
         status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
-        status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
-    status_placeholder.markdown(status_text, unsafe_allow_html=True)
-
-    st.write("### Riepilogo Download")
-    st.write(f"**Totale tracce:** {num_tracks}")
-    st.write(f"**Scaricate con successo:** {downloaded_count}")
-    st.write(f"**Tracce non scaricate:** {len(st.session_state['pending_tracks'])}")
-
-    if st.session_state['pending_tracks']:
-        st.write("**Elenco tracce non scaricate:**")
-        for track_key in st.session_state['pending_tracks']:
-            st.write(f"- {track_key}")
-
-        if st.session_state['download_errors']:
-            with st.expander("Dettagli errori download"):
-                for track_key, errors in st.session_state['download_errors'].items():
-                    st.write(f"**{track_key}:**")
-                    for error in errors:
-                        st.write(f"- {error}")
-                        
-        # Deduplicazione dei file scaricati
-        unique_downloaded_files = []
-        seen_paths = set()
-        for file in downloaded_files:
-            if file and file not in seen_paths:
-                seen_paths.add(file)
-                unique_downloaded_files.append(file)
-            else:
-                st.session_state['log_messages'].append(f"⚠️ Duplicato rimosso dalla lista finale: {file}")
-
-        # Log dei file scaricati
-        st.session_state['downloaded_files'] = unique_downloaded_files
-        st.session_state['log_messages'].append(f"📥 File scaricati registrati (univoci): {len(unique_downloaded_files)}")
-        for file in unique_downloaded_files:
-            st.session_state['log_messages'].append(f" - {file}")
-
-        st.session_state['pending_tracks'] = pending_tracks
-        st.session_state['download_errors'] = download_errors
-        st.session_state['download_progress'] = track_status
-
-    status_text = "<h3>Stato Download Finale:</h3>"
-    for track_key, status in st.session_state['download_progress'].items():
-        status_class = ""
-        if "In corso" in status:
-            status_class = "info"
-        elif "✅ Scaricato" in status:
-            status_class = "success"
-        elif "❌ Errore" in status:
-            status_class = "error"
         status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
     status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
