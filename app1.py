@@ -20,8 +20,6 @@ import json
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
-# Add these functions to your code:
-
 import threading
 from queue import Queue
 
@@ -60,17 +58,13 @@ def increment_download_count():
         download_counter += 1
         return download_counter
 
-
-
 # 1. Sicurezza e Conformità Legale
-# Rimuovi Credenziali Hardcoded: Utilizza secrets di Streamlit
 CLIENT_ID = st.secrets.get('SPOTIFY', {}).get('CLIENT_ID')
 CLIENT_SECRET = st.secrets.get('SPOTIFY', {}).get('CLIENT_SECRET')
 
 if not CLIENT_ID or not CLIENT_SECRET:
     st.error("Le credenziali Spotify non sono state configurate in Streamlit Secrets.")
     st.stop()
-
 
 # Inizializza lo stato della sessione
 if 'downloaded_files' not in st.session_state:
@@ -112,7 +106,6 @@ for key in required_keys:
         elif key in ['user_agent_index', 'proxy_index']:
             st.session_state[key] = 0
 
-
 # 6. Configurazione Selenium Avanzata
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -120,9 +113,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; rv:121.0) Gecko/20100101 Firefox/121.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    # Aggiungi altri user agent
 ]
-PROXY_LIST = [] # Popola questa lista se vuoi usare i proxy
+PROXY_LIST = []  # Popola questa lista se vuoi usare i proxy
 
 # Configura la directory di download
 download_dir = tempfile.mkdtemp()
@@ -134,20 +126,16 @@ CACHE_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 
 # Funzione per ottenere il prossimo user agent
 def get_next_user_agent():
-    # Ensure the key is initialized
     if 'user_agent_index' not in st.session_state:
         st.session_state['user_agent_index'] = 0
-    
     user_agent = USER_AGENTS[st.session_state['user_agent_index'] % len(USER_AGENTS)]
     st.session_state['user_agent_index'] += 1
     return user_agent
 
 # Funzione per ottenere il prossimo proxy
 def get_next_proxy():
-    # Ensure the key is initialized
     if 'proxy_index' not in st.session_state:
         st.session_state['proxy_index'] = 0
-        
     if PROXY_LIST:
         proxy = PROXY_LIST[st.session_state['proxy_index'] % len(PROXY_LIST)]
         st.session_state['proxy_index'] += 1
@@ -155,7 +143,6 @@ def get_next_proxy():
     return None
 
 # Configura le opzioni di Chrome
-# Replace your get_chrome_options function with this one:
 def get_thread_safe_chrome_options(use_proxy=False):
     options = webdriver.ChromeOptions()
     prefs = {
@@ -173,33 +160,29 @@ def get_thread_safe_chrome_options(use_proxy=False):
     options.add_argument("--disable-popup-blocking")
     options.add_argument("--window-size=1920,1080")
     options.add_argument(f"user-agent={get_thread_safe_user_agent()}")
-    
     proxy = get_thread_safe_proxy() if use_proxy else None
     if proxy:
         options.add_argument(f"--proxy-server={proxy}")
     return options
 
-
 # Funzione per creare una nuova istanza del browser
-# Replace your create_browser_instance function with:
 def create_thread_safe_browser_instance(use_proxy=False):
     try:
         return webdriver.Chrome(options=get_thread_safe_chrome_options(use_proxy))
     except Exception as e:
         print(f"Errore nella creazione del browser: {str(e)}")
         try:
-            return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), 
+            return webdriver.Chrome(service=Service("/usr/bin/chromedriver"),
                                    options=get_thread_safe_chrome_options(use_proxy))
         except Exception as e2:
             print(f"Secondo tentativo fallito: {str(e2)}")
             raise
 
-
 # 3. Ottimizzazione Performance - Browser Pool
 def get_browser_from_pool(use_proxy=False):
     if st.session_state['browser_pool']:
         return st.session_state['browser_pool'].pop()
-    return create_browser_instance(use_proxy)
+    return create_thread_safe_browser_instance(use_proxy)
 
 def return_browser_to_pool(browser):
     if browser:
@@ -235,12 +218,9 @@ def split_title(full_title):
 def normalize_artist(artist_string):
     if not artist_string:
         return ""
-    # Normalizza l'artista: rimuovi spazi extra, converti in minuscolo
     normalized = artist_string.split(',')[0].strip().lower()
-    # Gestisci le varianti comuni come "and", "&", "e"
     normalized = normalized.replace(" & ", " and ").replace(" ", " ")
     return normalized
-
 
 # 2. Gestione degli Errori Migliorata - Controllo File Corrotti
 def is_file_complete(filepath, expected_extension):
@@ -258,8 +238,7 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
     expected_extension = formato.split('-')[0] if '-' in formato else formato
 
     while time.time() - start_time < timeout:
-        current_files = [os.path
-                          .abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
+        current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
         crdownload_files = glob.glob(os.path.join(download_dir, "*.crdownload"))
 
         new_files = [f for f in current_files if f not in existing_files]
@@ -289,8 +268,8 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
 # Funzione per creare l'archivio ZIP
 def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
     zip_path = os.path.join(download_dir, zip_name)
-    included_files = []  # Tieni traccia dei file effettivamente inclusi
-    
+    included_files = []
+
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path in downloaded_files:
@@ -305,14 +284,14 @@ def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricat
                         st.session_state['log_messages'].append(f"⚠️ File vuoto escluso dallo ZIP: {file_path}")
                 else:
                     st.session_state['log_messages'].append(f"⚠️ File non trovato per lo ZIP: {file_path}")
-        
+
         if not included_files:
             st.session_state['log_messages'].append("❌ Nessun file valido incluso nello ZIP")
             return None
-        
+
         st.session_state['log_messages'].append(f"✅ Creato ZIP con {len(included_files)} file: {zip_path}")
         return zip_path if os.path.exists(zip_path) else None
-    
+
     except Exception as e:
         st.session_state['log_messages'].append(f"❌ Errore nella creazione dello ZIP: {str(e)}")
         return None
@@ -346,7 +325,7 @@ def get_spotify_tracks(playlist_link):
         playlist_id = get_playlist_id(playlist_link)
         tracks_data = _get_spotify_tracks(sp, playlist_id)
         return [{"artist": ', '.join([artist['name'] for artist in item['track']['artists']]),
-                "title": item['track']['name']} for item in tracks_data if item['track']]
+                 "title": item['track']['name']} for item in tracks_data if item['track']]
     except Exception as e:
         st.session_state['log_messages'].append(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
         return None
@@ -383,7 +362,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
     track_key = traccia
     browser = None
     log_messages = []
-    
+
     try:
         options = webdriver.ChromeOptions()
         prefs = {
@@ -401,18 +380,17 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--window-size=1920,1080")
         options.add_argument(f"user-agent={get_thread_safe_user_agent()}")
-        
         proxy = get_thread_safe_proxy() if use_proxy else None
         if proxy:
             options.add_argument(f"--proxy-server={proxy}")
-        
+
         browser = webdriver.Chrome(options=options)
         artista_input, traccia_input = split_title(traccia)
         log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
-        
+
         browser.get("https://lucida.su")
         log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
-        
+
         if "captcha" in browser.page_source.lower() or "cloudflare" in browser.page_source.lower():
             log_messages.append("⚠️ Rilevato CAPTCHA o protezione Cloudflare")
             return {
@@ -422,13 +400,13 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "log": log_messages,
                 "status": "❌ Bloccato da protezione"
             }
-        
+
         input_field = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "download")))
         input_field.clear()
         input_field.send_keys(traccia)
         log_messages.append(f"✍️ Campo input compilato: '{traccia}'")
         time.sleep(2)
-        
+
         select_service = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "service")))
         opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
         if servizio_idx >= len(opzioni_service):
@@ -440,7 +418,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "log": log_messages,
                 "status": "❌ Errore: Indice servizio non valido"
             }
-        
+
         servizio_valore = opzioni_service[servizio_idx].get_attribute("value")
         browser.execute_script("""
             var select = arguments[0];
@@ -456,7 +434,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         """, select_service, servizio_valore)
         log_messages.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
         time.sleep(5)
-        
+
         WebDriverWait(browser, 60).until(
             lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0,
             message="Timeout attesa opzioni 'country'"
@@ -475,11 +453,11 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         select_country.select_by_index(0)
         log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
         time.sleep(1)
-        
+
         go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
         go_button.click()
         log_messages.append("▶️ Pulsante 'go' cliccato")
-        
+
         try:
             WebDriverWait(browser, 90).until(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
@@ -496,25 +474,23 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "status": f"❌ Errore: Timeout caricamento risultati - {str(e)}"
             }
         time.sleep(15)
-        
+
         titoli = browser.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
         artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
-        
+
         best_match_found = False
         for i, titolo in enumerate(titoli):
             titolo_testo = titolo.text.strip().lower()
             traccia_testo = traccia_input.lower().strip()
-            # Normalizzazione più robusta
             titolo_normalizzato = re.sub(r'[^\w\s]', '', titolo_testo)
             traccia_normalizzata = re.sub(r'[^\w\s]', '', traccia_testo)
             parole_traccia = set(traccia_normalizzata.split())
             parole_titolo = set(titolo_normalizzato.split())
             match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
-            
+
             log_messages.append(f"🔍 Confronto: '{traccia_normalizzata}' con '{titolo_normalizzato}' (Match: {match:.2%})")
-            
-            # Condizioni di match più flessibili
+
             if (match >= 0.5 and len(titoli) > 1) or (match >= 0.2 and len(titoli) == 1) or traccia_normalizzata in titolo_normalizzato:
                 if artista_input and i < len(artisti):
                     artista_risultato = artisti[i].text.strip().lower()
@@ -530,14 +506,14 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                     if not artist_match and match < 0.8:
                         log_messages.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
                         continue
-                
+
                 browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
                 time.sleep(1)
                 titolo.click()
                 log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_normalizzato}'")
                 best_match_found = True
                 break
-        
+
         if not best_match_found:
             log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
             return {
@@ -547,14 +523,14 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "log": log_messages,
                 "status": "❌ Errore: Traccia non trovata"
             }
-        
+
         time.sleep(5)
-        
+
         select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
         select_convert.select_by_value(formato_valore)
         log_messages.append(f"🎧 Formato selezionato: {formato_valore}")
         time.sleep(1)
-        
+
         if formato_valore not in ["wav", "original", "bitcrush"]:
             select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
             try:
@@ -572,14 +548,14 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         else:
             log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
         time.sleep(1)
-        
+
         existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
         download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
         browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
         time.sleep(1)
         download_button.click()
         log_messages.append("⬇️ Pulsante di download cliccato")
-        
+
         success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
         log_messages.append(message)
         return {
@@ -589,7 +565,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             "log": log_messages,
             "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
         }
-    
+
     except Exception as e:
         error_message = f"❌ Errore durante il download: {str(e)}"
         log_messages.append(error_message)
@@ -605,32 +581,6 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         if browser:
             safe_browser_quit(browser)
             log_messages.append("🧹 Browser chiuso")
-            
-# Teniamo traccia dello stato localmente per ciascun thread
-def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
-    track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
-    
-    # Don't rely on st.session_state inside the thread
-    # Instead, create a new browser instance directly
-    browser = create_browser_instance(use_proxy)
-    
-    try:
-        # Execute the download
-        success, downloaded_file, log = _download_single_track_with_browser(
-            browser, track_info, servizio_indice, formato_valore, qualita_valore, use_proxy)
-        
-        # Return a dictionary with all necessary information
-        return {
-            "track_key": track_key,
-            "success": success,
-            "downloaded_file": downloaded_file,
-            "log": log,
-            "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
-        }
-    finally:
-        # Ensure browser is closed
-        safe_browser_quit(browser)
-        
 
 # 7. Pulizia Risorse - Autopulizia File
 def cleanup_temp_files():
@@ -684,7 +634,6 @@ st.warning("⚠️ Prima di scaricare, assicurati di rispettare le leggi sul cop
 use_proxy = st.sidebar.checkbox("Usa Proxy", False)
 
 # Carica i servizi disponibili
-# Carica i servizi disponibili
 if 'servizi_disponibili' not in st.session_state or not st.session_state['servizi_disponibili']:
     with st.spinner("Caricamento servizi disponibili..."):
         try:
@@ -694,34 +643,23 @@ if 'servizi_disponibili' not in st.session_state or not st.session_state['serviz
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
-            
-            # Use a fixed user agent to avoid session state dependency
             options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            
-            # Create a temporary browser without relying on functions that use session state
             temp_browser = webdriver.Chrome(options=options)
-            
-            # Get available services
             try:
                 st.session_state['servizi_disponibili'] = get_available_services(temp_browser)
             finally:
-                # Always close the browser
                 try:
                     temp_browser.quit()
                 except:
                     pass
-                
             if st.session_state['servizi_disponibili']:
                 st.success(f"Caricati {len(st.session_state['servizi_disponibili'])} servizi disponibili.")
             else:
                 st.warning("Impossibile caricare i servizi disponibili.")
-                # Default services if none are loaded
                 st.session_state['servizi_disponibili'] = [{"index": 1, "value": "1", "text": "Servizio predefinito"}]
         except Exception as e:
             st.error(f"Errore durante il caricamento dei servizi: {str(e)}")
-            # Default services in case of error
             st.session_state['servizi_disponibili'] = [{"index": 1, "value": "1", "text": "Servizio predefinito"}]
-
 
 # Preferenze di download
 st.subheader("Preferenze di download")
@@ -741,7 +679,7 @@ with col2:
     qualita_selezionata = st.selectbox("Qualità audio", options=list(QUALITA_DISPONIBILI.values()), index=0)
     qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
 
-# Numero di thread (dinamico - implementazione semplificata)
+# Numero di thread
 num_threads = st.slider("Numero di download paralleli", min_value=1, max_value=5, value=2, help="Un numero inferiore riduce il rischio di blocchi.")
 
 # Playlist Spotify
@@ -771,20 +709,18 @@ if uploaded_file is not None:
         if len(parts) == 2:
             tracks_to_download.append({"artist": parts[0].strip(), "title": parts[1].strip()})
         elif line.strip():
-            tracks_to_download.append({"title": line.strip(), "artist": None}) # Prova a scaricare solo con il titolo
+            tracks_to_download.append({"title": line.strip(), "artist": None})
 
 if tracks_to_download:
     st.write(f"**Tracce selezionate per il download:** {len(tracks_to_download)}")
-    # 4. Usabilità - Ordinamento Risultati
     sort_by = st.selectbox("Ordina per:", ["Nessuno", "Artista", "Titolo"])
     if sort_by == "Artista":
         tracks_to_download.sort(key=lambda x: x.get('artist', '').lower())
     elif sort_by == "Titolo":
         tracks_to_download.sort(key=lambda x: x.get('title', '').lower())
-
     st.dataframe(tracks_to_download)
 
-# 8. Notifiche e Feedback (implementazione semplice via Streamlit)
+# 8. Notifiche e Feedback
 if 'downloaded_files' in st.session_state and st.session_state['downloaded_files'] and st.session_state.get('download_started', False):
     st.balloons()
     st.success(f"🎉 Download completato! {len(st.session_state['downloaded_files'])} tracce scaricate con successo.")
@@ -795,45 +731,34 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     st.session_state['downloaded_files'] = []
     st.session_state['log_messages'] = []
     st.session_state['pending_tracks'] = []
-    
-    # Initialize the state dictionary for all tracks
+
     track_status = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
-    # Update session state once, not for each thread
     st.session_state['download_progress'] = track_status.copy()
     st.session_state['download_errors'] = {}
-    
+
     progress_bar = st.progress(0)
     num_tracks = len(tracks_to_download)
     downloaded_count = 0
-    
-    # Container for download results
+
     download_results_container = st.container()
-    with download_results_container.container():
+    with download_results_container:
         status_placeholder = st.empty()
-        
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = [
             executor.submit(
-                download_track_thread_safe, 
+                download_track_thread_safe,
                 track, servizio_indice, formato_valore, qualita_valore, use_proxy
-        ) 
-        for track in tracks_to_download
-    ]
+            )
+            for track in tracks_to_download
+        ]
 
-        # Dopo il ciclo dei futures nella sezione "Avvia Download"
-        st.session_state['downloaded_files'] = downloaded_files
-        st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
-        for file in downloaded_files:
-            st.session_state['log_messages'].append(f" - {file}")
-        
-        # Show status during download
         pending_futures = list(futures)
         downloaded_files = []
         pending_tracks = []
         download_errors = {}
-        
+
         while pending_futures:
-            # Update status visually
             status_text = "<h3>Stato Download in corso:</h3>"
             for track_key, status in track_status.items():
                 status_class = ""
@@ -844,47 +769,43 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
                 elif "❌ Errore" in status:
                     status_class = "error"
                 status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
-            
             status_placeholder.markdown(status_text, unsafe_allow_html=True)
-            
-            # Check completed downloads
+
             done, pending_futures = concurrent.futures.wait(
-                pending_futures, 
+                pending_futures,
                 timeout=0.5,
                 return_when=concurrent.futures.FIRST_COMPLETED
             )
-            
-            # Process completed downloads
+
             for future in done:
                 try:
                     result = future.result()
                     track_key = result["track_key"]
-                    
-                    # Update local state
                     track_status[track_key] = result["status"]
-                    
+
                     if result["success"] and result["downloaded_file"]:
                         downloaded_files.append(result["downloaded_file"])
                         downloaded_count += 1
                     else:
                         pending_tracks.append(track_key)
                         download_errors[track_key] = result["log"]
-                    
-                    # Update progress bar
+
                     progress_value = (len(tracks_to_download) - len(pending_futures)) / num_tracks
                     progress_bar.progress(progress_value)
-                
+
                 except Exception as e:
                     st.error(f"Errore nel processare i risultati del download: {str(e)}")
 
-        # Update session state at the end
+        # Log dei file scaricati
         st.session_state['downloaded_files'] = downloaded_files
+        st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
+        for file in downloaded_files:
+            st.session_state['log_messages'].append(f" - {file}")
+
         st.session_state['pending_tracks'] = pending_tracks
         st.session_state['download_errors'] = download_errors
         st.session_state['download_progress'] = track_status
 
-
-    # Stato finale
     status_text = "<h3>Stato Download Finale:</h3>"
     for track_key, status in st.session_state['download_progress'].items():
         status_class = ""
@@ -895,19 +816,18 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         elif "❌ Errore" in status:
             status_class = "error"
         status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
-        
     status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
     st.write("### Riepilogo Download")
     st.write(f"**Totale tracce:** {num_tracks}")
     st.write(f"**Scaricate con successo:** {downloaded_count}")
     st.write(f"**Tracce non scaricate:** {len(st.session_state['pending_tracks'])}")
-    
+
     if st.session_state['pending_tracks']:
         st.write("**Elenco tracce non scaricate:**")
         for track_key in st.session_state['pending_tracks']:
             st.write(f"- {track_key}")
-        
+
         if st.session_state['download_errors']:
             with st.expander("Dettagli errori download"):
                 for track_key, errors in st.session_state['download_errors'].items():
@@ -915,6 +835,7 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
                     for error in errors:
                         st.write(f"- {error}")
 
+# Sidebar
 st.sidebar.subheader("Disclaimer")
 st.sidebar.info("""
 Questo strumento è fornito a scopo didattico e per uso personale.
@@ -925,35 +846,28 @@ Il download di materiale protetto da copyright senza autorizzazione
 per un uso improprio di questo strumento.
 """)
 
-# Pulizia della sessione (utile per test)
 if st.sidebar.button("Pulisci Sessione"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
 
-# Ulteriore miglioramento usabilità: espansore per le impostazioni avanzate
 with st.sidebar.expander("Impostazioni Avanzate"):
-    # Opzione per forzare il ricaricamento dei servizi
     if st.button("Ricarica Servizi"):
         st.session_state['servizi_disponibili'] = []
         st.rerun()
-
-    # Opzione per visualizzare il log completo
     if st.checkbox("Mostra log completo"):
         st.subheader("Log Completo")
         for log_message in st.session_state.get('log_messages', []):
             st.write(log_message)
 
-# Un piccolo easter egg (opzionale)
 if st.sidebar.checkbox("Modalità Sorpresa?"):
-    st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)") # Sostituisci con un link a un'immagine
+    st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)")
     st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
 
-# Messaggio finale per indicare che non ci sono ulteriori implementazioni immediate
 st.markdown("---")
 st.info("L'applicazione è stata potenziata con diverse ottimizzazioni e nuove funzionalità. Ulteriori miglioramenti potrebbero essere implementati in futuro.")
 
-# Funzionalità per scaricare un singolo file ZIP contenente tutte le tracce scaricate
+# Funzionalità per scaricare un singolo file ZIP
 if st.session_state.get('downloaded_files'):
     st.subheader("Scarica le tracce")
     zip_filename = "tracce_scaricate.zip"
@@ -966,26 +880,9 @@ if st.session_state.get('downloaded_files'):
                 file_name=zip_filename,
                 mime="application/zip"
             )
-        # Pulizia dei file temporanei dopo aver offerto il download dello ZIP
-        if st.session_state.get('downloaded_files'):
-        st.subheader("Scarica le tracce")
-        zip_filename = "tracce_scaricate.zip"
-        zip_path = create_zip_archive(download_dir, st.session_state['downloaded_files'], zip_filename)
-        if zip_path:
-            with open(zip_path, "rb") as f:
-                st.download_button(
-                    label="Scarica tutte le tracce come ZIP",
-                    data=f,
-                    file_name=zip_filename,
-                    mime="application/zip"
-                )
-            # Pulizia solo dopo il download
-            if st.button("Pulisci file temporanei dopo il download"):
-                cleanup_temp_files()
-                st.session_state['log_messages'].append("🗑️ File temporanei puliti manualmente")
-                
-    else:
-        st.error("Errore nella creazione dell'archivio ZIP.")
+        if st.button("Pulisci file temporanei dopo il download"):
+            cleanup_temp_files()
+            st.session_state['log_messages'].append("🗑️ File temporanei puliti manualmente")
     else:
         st.error("Errore nella creazione dell'archivio ZIP.")
 elif st.session_state.get('download_started', False) and not st.session_state.get('downloaded_files'):
@@ -1001,9 +898,6 @@ elif use_proxy and PROXY_LIST:
 elif not use_proxy:
     st.sidebar.info("Non stai utilizzando un proxy.")
 
-# Chiusura esplicita del pool di browser quando l'app Streamlit si chiude
-import atexit
-
 atexit.register(close_all_browsers)
 
 st.markdown("---")
@@ -1012,7 +906,6 @@ st.info("Grazie per aver utilizzato il Downloader di Tracce Musicali (PIZZUNA)!"
 st.markdown("---")
 st.markdown("Sviluppato con ❤️ da un appassionato di musica.")
 
-# Aggiungiamo un po' di stile CSS per migliorare la visualizzazione
 st.markdown("""
 <style>
     .info {
