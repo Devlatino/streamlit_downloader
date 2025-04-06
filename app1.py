@@ -269,47 +269,38 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
 def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
     zip_path = os.path.join(download_dir, zip_name)
     included_files = []
-    unique_files = set()  # Per tracciare i file univoci
+    file_count = {}  # Per rinominare i duplicati
 
     st.session_state['log_messages'].append(f"📦 Creazione ZIP: {zip_path}")
     st.session_state['log_messages'].append(f"📋 File da includere (originali): {len(downloaded_files)}")
 
-    # Rimuovi duplicati mantenendo l'ordine originale
-    seen_basenames = set()
-    deduplicated_files = []
-    for file_path in downloaded_files:
-        if not file_path or not isinstance(file_path, str):
-            st.session_state['log_messages'].append(f"⚠️ Percorso non valido: {file_path}")
-            continue
-        abs_file_path = os.path.abspath(file_path)
-        basename = os.path.basename(abs_file_path)
-        if basename not in seen_basenames:
-            seen_basenames.add(basename)
-            deduplicated_files.append(abs_file_path)
-        else:
-            st.session_state['log_messages'].append(f"⚠️ Duplicato rimosso: {abs_file_path}")
-
-    st.session_state['log_messages'].append(f"📋 File univoci dopo deduplicazione: {len(deduplicated_files)}")
-
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for file_path in deduplicated_files:
-                if os.path.exists(file_path):
-                    if os.path.getsize(file_path) > 0:
-                        zipf.write(file_path, os.path.basename(file_path))
-                        included_files.append(file_path)
-                        unique_files.add(os.path.basename(file_path))
-                        st.session_state['log_messages'].append(f"✅ Aggiunto allo ZIP: {file_path}")
+            for file_path in downloaded_files:
+                if not file_path or not isinstance(file_path, str):
+                    st.session_state['log_messages'].append(f"⚠️ Percorso non valido: {file_path}")
+                    continue
+                abs_file_path = os.path.abspath(file_path)
+                if os.path.exists(abs_file_path) and os.path.getsize(abs_file_path) > 0:
+                    basename = os.path.basename(abs_file_path)
+                    if basename in file_count:
+                        file_count[basename] += 1
+                        name, ext = os.path.splitext(basename)
+                        new_name = f"{name}_{file_count[basename]}{ext}"
                     else:
-                        st.session_state['log_messages'].append(f"⚠️ File vuoto escluso: {file_path}")
+                        file_count[basename] = 0
+                        new_name = basename
+                    zipf.write(abs_file_path, new_name)
+                    included_files.append(abs_file_path)
+                    st.session_state['log_messages'].append(f"✅ Aggiunto allo ZIP come '{new_name}': {abs_file_path}")
                 else:
-                    st.session_state['log_messages'].append(f"❌ File non trovato: {file_path}")
+                    st.session_state['log_messages'].append(f"❌ File non trovato o vuoto: {abs_file_path}")
 
         if not included_files:
             st.session_state['log_messages'].append("❌ Nessun file valido incluso nello ZIP")
             return None
 
-        st.session_state['log_messages'].append(f"✅ ZIP creato con {len(included_files)} file univoci: {zip_path}")
+        st.session_state['log_messages'].append(f"✅ ZIP creato con {len(included_files)} file: {zip_path}")
         return zip_path if os.path.exists(zip_path) else None
 
     except Exception as e:
@@ -746,7 +737,7 @@ if 'downloaded_files' in st.session_state and st.session_state['downloaded_files
     st.success(f"🎉 Download completato! {len(st.session_state['downloaded_files'])} tracce scaricate con successo.")
     st.session_state['download_started'] = False
 
-if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
+ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_download:
     st.session_state['download_started'] = True
     st.session_state['downloaded_files'] = []
     st.session_state['log_messages'] = []
@@ -765,57 +756,83 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         status_placeholder = st.empty()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = [
+        futures = {
             executor.submit(
                 download_track_thread_safe,
                 track, servizio_indice, formato_valore, qualita_valore, use_proxy
-            )
-            for track in tracks_to_download
-        ]
+            ): track for track in tracks_to_download
+        }
 
-        pending_futures = list(futures)
         downloaded_files = []
         pending_tracks = []
         download_errors = {}
 
-        while pending_futures:
+        for future in concurrent.futures.as_completed(futures):
+            track = futures[future]
+            track_key = f"{track.get('artist', '')} - {track.get('title', '')}"
+            try:
+                result = future.result()
+                track_status[track_key] = result["status"]
+                st.session_state['log_messages'].extend(result["log"])  # Aggiungi il log della traccia
+
+                if result["success"] and result["downloaded_file"]:
+                    downloaded_files.append(result["downloaded_file"])
+                    downloaded_count += 1
+                    st.session_state['log_messages'].append(f"✅ Traccia scaricata con successo: {track_key} -> {result['downloaded_file']}")
+                else:
+                    pending_tracks.append(track_key)
+                    download_errors[track_key] = result["log"]
+                    st.session_state['log_messages'].append(f"❌ Traccia fallita: {track_key}")
+
+                progress_value = downloaded_count / num_tracks
+                progress_bar.progress(progress_value)
+
+            except Exception as e:
+                track_status[track_key] = f"❌ Errore: {str(e)}"
+                pending_tracks.append(track_key)
+                download_errors[track_key] = [f"Errore durante l'elaborazione: {str(e)}"]
+                st.session_state['log_messages'].append(f"❌ Errore critico per {track_key}: {str(e)}")
+
+            # Aggiorna lo stato in tempo reale
             status_text = "<h3>Stato Download in corso:</h3>"
-            for track_key, status in track_status.items():
-                status_class = ""
-                if "In corso" in status:
-                    status_class = "info"
-                elif "✅ Scaricato" in status:
-                    status_class = "success"
-                elif "❌ Errore" in status:
-                    status_class = "error"
-                status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+            for tk, status in track_status.items():
+                status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
+                status_text += f"<div class='{status_class}'>{tk}: {status}</div>"
             status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
-            done, pending_futures = concurrent.futures.wait(
-                pending_futures,
-                timeout=0.5,
-                return_when=concurrent.futures.FIRST_COMPLETED
-            )
+        # Registra tutti i file scaricati senza deduplicazione preventiva
+        st.session_state['downloaded_files'] = downloaded_files
+        st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
+        for file in downloaded_files:
+            st.session_state['log_messages'].append(f" - {file}")
 
-            for future in done:
-                try:
-                    result = future.result()
-                    track_key = result["track_key"]
-                    track_status[track_key] = result["status"]
+        st.session_state['pending_tracks'] = pending_tracks
+        st.session_state['download_errors'] = download_errors
+        st.session_state['download_progress'] = track_status
 
-                    if result["success"] and result["downloaded_file"]:
-                        downloaded_files.append(result["downloaded_file"])
-                        downloaded_count += 1
-                    else:
-                        pending_tracks.append(track_key)
-                        download_errors[track_key] = result["log"]
+    status_text = "<h3>Stato Download Finale:</h3>"
+    for track_key, status in st.session_state['download_progress'].items():
+        status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
+        status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+    status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
-                    progress_value = (len(tracks_to_download) - len(pending_futures)) / num_tracks
-                    progress_bar.progress(progress_value)
+    st.write("### Riepilogo Download")
+    st.write(f"**Totale tracce:** {num_tracks}")
+    st.write(f"**Scaricate con successo:** {downloaded_count}")
+    st.write(f"**Tracce non scaricate:** {len(st.session_state['pending_tracks'])}")
 
-                except Exception as e:
-                    st.error(f"Errore nel processare i risultati del download: {str(e)}")
+    if st.session_state['pending_tracks']:
+        st.write("**Elenco tracce non scaricate:**")
+        for track_key in st.session_state['pending_tracks']:
+            st.write(f"- {track_key}")
 
+        if st.session_state['download_errors']:
+            with st.expander("Dettagli errori download"):
+                for track_key, errors in st.session_state['download_errors'].items():
+                    st.write(f"**{track_key}:**")
+                    for error in errors:
+                        st.write(f"- {error}")
+                        
         # Deduplicazione dei file scaricati
         unique_downloaded_files = []
         seen_paths = set()
