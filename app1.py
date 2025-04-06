@@ -229,7 +229,7 @@ def is_file_complete(filepath, expected_extension):
     return os.path.getsize(filepath) > 0
 
 # Funzione per aspettare il download
-def wait_for_download(download_dir, existing_files, formato, track_key, timeout=180):
+def wait_for_download(download_dir, existing_files, formato, track_key, timeout=300):
     start_time = time.time()
     expected_extension = formato.split('-')[0] if '-' in formato else formato
     artist_part, title_part = split_title(track_key)
@@ -242,9 +242,9 @@ def wait_for_download(download_dir, existing_files, formato, track_key, timeout=
 
         new_files = [f for f in current_files if f not in existing_files]
         for file in new_files:
-            filename = os.path.basename(file).lower()
-            if (title_part in filename or (artist_part and artist_part in filename)) and is_file_complete(file, expected_extension):
+            if is_file_complete(file, expected_extension):
                 return True, f"Download completato: {file}", file
+            # Nota: Rimuoviamo il controllo specifico su title_part/artist_part
 
         if crdownload_files:
             time.sleep(5)
@@ -257,13 +257,14 @@ def wait_for_download(download_dir, existing_files, formato, track_key, timeout=
         all_new_files = [f for f in os.listdir(download_dir) if os.path.join(download_dir, f) not in existing_files]
         for f in all_new_files:
             full_path = os.path.join(download_dir, f)
-            filename = os.path.basename(full_path).lower()
-            if (title_part in filename or (artist_part and artist_part in filename)) and os.path.isfile(full_path) and is_file_complete(full_path, expected_extension):
+            if os.path.isfile(full_path) and is_file_complete(full_path, expected_extension):
                 return True, f"Download completato: {f}", full_path
 
         time.sleep(5)
 
-    return False, f"Timeout raggiunto ({timeout}s), nessun file corrispondente trovato per '{track_key}'.", None
+    # Aggiungiamo logging per i file trovati
+    found_files = glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))
+    return False, f"Timeout raggiunto ({timeout}s), nessun file valido trovato per '{track_key}'. File nella directory: {found_files}", None
 
 # Funzione per creare l'archivio ZIP (corretta per evitare duplicati)
 def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
@@ -471,7 +472,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append("▶️ Pulsante 'go' cliccato")
 
         try:
-            WebDriverWait(browser, 90).until(
+            WebDriverWait(browser, 120).until(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
             )
             log_messages.append("🔍 Risultati caricati con successo")
@@ -767,60 +768,61 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     with download_results_container:
         status_placeholder = st.empty()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = {
-            executor.submit(
-                download_track_thread_safe,
-                track, servizio_indice, formato_valore, qualita_valore, use_proxy
-            ): track for track in tracks_to_download
-        }
+    max_attempts = 2  # Numero massimo di tentativi per traccia
+    for attempt in range(max_attempts):
+        pending_tracks = tracks_to_download if attempt == 0 else [t for t in tracks_to_download if f"{t.get('artist', '')} - {t.get('title', '')}" in st.session_state['pending_tracks']]
+        if not pending_tracks:
+            break
+        st.session_state['log_messages'].append(f"📌 Tentativo {attempt + 1} di {max_attempts} per {len(pending_tracks)} tracce")
 
-        downloaded_files = []
-        pending_tracks = []
-        download_errors = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {
+                executor.submit(
+                    download_track_thread_safe,
+                    track, servizio_indice, formato_valore, qualita_valore, use_proxy
+                ): track for track in pending_tracks
+            }
 
-        for future in concurrent.futures.as_completed(futures):
-            track = futures[future]
-            track_key = f"{track.get('artist', '')} - {track.get('title', '')}"
-            try:
-                result = future.result()
-                track_status[track_key] = result["status"]
-                st.session_state['log_messages'].extend(result["log"])  # Aggiungi il log della traccia
+            downloaded_files = st.session_state['downloaded_files']
+            pending_tracks_keys = []
 
-                if result["success"] and result["downloaded_file"]:
-                    downloaded_files.append(result["downloaded_file"])
-                    downloaded_count += 1
-                    st.session_state['log_messages'].append(f"✅ Traccia scaricata con successo: {track_key} -> {result['downloaded_file']}")
-                else:
-                    pending_tracks.append(track_key)
-                    download_errors[track_key] = result["log"]
-                    st.session_state['log_messages'].append(f"❌ Traccia fallita: {track_key}")
+            for future in concurrent.futures.as_completed(futures):
+                track = futures[future]
+                track_key = f"{track.get('artist', '')} - {track.get('title', '')}"
+                try:
+                    result = future.result()
+                    track_status[track_key] = result["status"]
+                    st.session_state['log_messages'].extend(result["log"])
 
-                progress_value = downloaded_count / num_tracks
-                progress_bar.progress(progress_value)
+                    if result["success"] and result["downloaded_file"]:
+                        downloaded_files.append(result["downloaded_file"])
+                        downloaded_count += 1
+                        st.session_state['log_messages'].append(f"✅ Traccia scaricata con successo: {track_key} -> {result['downloaded_file']}")
+                    else:
+                        pending_tracks_keys.append(track_key)
+                        st.session_state['download_errors'][track_key] = result["log"]
+                        st.session_state['log_messages'].append(f"❌ Traccia fallita: {track_key}")
 
-            except Exception as e:
-                track_status[track_key] = f"❌ Errore: {str(e)}"
-                pending_tracks.append(track_key)
-                download_errors[track_key] = [f"Errore durante l'elaborazione: {str(e)}"]
-                st.session_state['log_messages'].append(f"❌ Errore critico per {track_key}: {str(e)}")
+                    progress_value = downloaded_count / num_tracks
+                    progress_bar.progress(progress_value)
 
-            # Aggiorna lo stato in tempo reale
-            status_text = "<h3>Stato Download in corso:</h3>"
-            for tk, status in track_status.items():
-                status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
-                status_text += f"<div class='{status_class}'>{tk}: {status}</div>"
-            status_placeholder.markdown(status_text, unsafe_allow_html=True)
+                except Exception as e:
+                    track_status[track_key] = f"❌ Errore: {str(e)}"
+                    pending_tracks_keys.append(track_key)
+                    st.session_state['download_errors'][track_key] = [f"Errore durante l'elaborazione: {str(e)}"]
+                    st.session_state['log_messages'].append(f"❌ Errore critico per {track_key}: {str(e)}")
 
-        # Registra tutti i file scaricati senza deduplicazione preventiva
-        st.session_state['downloaded_files'] = downloaded_files
-        st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
-        for file in downloaded_files:
-            st.session_state['log_messages'].append(f" - {file}")
+                status_text = "<h3>Stato Download in corso:</h3>"
+                for tk, status in track_status.items():
+                    status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
+                    status_text += f"<div class='{status_class}'>{tk}: {status}</div>"
+                status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
-        st.session_state['pending_tracks'] = pending_tracks
-        st.session_state['download_errors'] = download_errors
-        st.session_state['download_progress'] = track_status
+            st.session_state['downloaded_files'] = downloaded_files
+            st.session_state['pending_tracks'] = pending_tracks_keys
+            st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
+            for file in downloaded_files:
+                st.session_state['log_messages'].append(f" - {file}")
 
     # Stato finale
     status_text = "<h3>Stato Download Finale:</h3>"
