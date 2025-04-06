@@ -20,10 +20,9 @@ import json
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
-# Add these functions to your code:
-
 import threading
 from queue import Queue
+import unicodedata
 
 # Thread-safe counter
 download_counter = 0
@@ -35,35 +34,194 @@ proxy_index = 0
 user_agent_lock = threading.Lock()
 proxy_lock = threading.Lock()
 
-# Thread-safe function to get next user agent
+# Constants
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+PROXY_LIST = []  # Popola questa lista se vuoi usare i proxy
+TEMP_FILE_RETENTION = timedelta(hours=1)
+CACHE_MAX_SIZE = 100 * 1024 * 1024  # 100MB
+
+FORMATI_DISPONIBILI = {
+    "m4a-aac": "AAC (.m4a)",
+    "mp3": "MP3 (.mp3)",
+    "flac": "FLAC (.flac)",
+    "wav": "WAV (.wav)",
+    "ogg": "OGG (.ogg)"
+}
+
+QUALITA_DISPONIBILI = {
+    "320": "320 kbps (Alta)",
+    "256": "256 kbps (Media-Alta)",
+    "192": "192 kbps (Media)",
+    "128": "128 kbps (Bassa)"
+}
+
+# Utility Functions
 def get_thread_safe_user_agent():
+    """Get next user agent in a thread-safe manner."""
     global user_agent_index
     with user_agent_lock:
         user_agent = USER_AGENTS[user_agent_index % len(USER_AGENTS)]
         user_agent_index += 1
-        return user_agent
+    return user_agent
 
-# Thread-safe function to get next proxy
 def get_thread_safe_proxy():
+    """Get next proxy in a thread-safe manner."""
     global proxy_index
     if not PROXY_LIST:
         return None
     with proxy_lock:
         proxy = PROXY_LIST[proxy_index % len(PROXY_LIST)]
         proxy_index += 1
-        return proxy
+    return proxy
 
-# Function to increment download counter
 def increment_download_count():
+    """Increment download counter in a thread-safe manner."""
     global download_counter
     with counter_lock:
         download_counter += 1
-        return download_counter
+    return download_counter
 
+def remove_accents(text):
+    """Remove accents from characters."""
+    if not isinstance(text, str):
+        return text
+    return ''.join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
 
+def normalize_artist(artist_string):
+    """Normalize artist name for better comparison."""
+    if not artist_string:
+        return ""
+    normalized = remove_accents(artist_string.lower().strip())
+    if ',' in normalized:
+        normalized = normalized.split(',')[0].strip()
+    
+    articles = ['the ', 'a ', 'an ', 'il ', 'lo ', 'la ', 'i ', 'gli ', 'le ']
+    for article in articles:
+        if normalized.startswith(article):
+            normalized = normalized[len(article):]
+    
+    conjunctions = [' and ', ' & ', ' e ', ' et ', ' + ', ' con ', ' feat ', ' feat. ',
+                   ' featuring ', ' ft ', ' ft. ', ' vs ', ' vs. ', ' versus ', ' x ', ' with ']
+    for conj in conjunctions:
+        normalized = normalized.replace(conj, ' ')
+    
+    normalized = re.sub(r'\([^)]*\)', '', normalized)
+    normalized = re.sub(r'\[[^\]]*\]', '', normalized)
+    normalized = re.sub(r'[^\w\s]', '', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized
 
-# 1. Sicurezza e Conformità Legale
-# Rimuovi Credenziali Hardcoded: Utilizza secrets di Streamlit
+def normalize_track_title(title):
+    """Normalize track title by removing common suffixes and variations."""
+    if not title:
+        return ""
+    normalized = remove_accents(title.lower().strip())
+    
+    suffixes = [
+        ' - original mix', ' (original mix)', ' - radio edit', ' (radio edit)',
+        ' - edit', ' (edit)', ' - extended mix', ' (extended mix)',
+        ' - club mix', ' (club mix)', ' - remix', ' (remix)',
+        ' - radio version', ' (radio version)', ' - album version', ' (album version)',
+        ' - instrumental', ' (instrumental)', ' - acoustic', ' (acoustic)',
+        ' - live', ' (live)'
+    ]
+    for suffix in suffixes:
+        if normalized.endswith(suffix):
+            normalized = normalized[:-len(suffix)]
+    
+    normalized = re.sub(r'(feat\.|feat|ft\.|ft|featuring).*', '', normalized)
+    normalized = re.sub(r'\([^)]*\)', '', normalized)
+    normalized = re.sub(r'\[[^\]]*\]', '', normalized)
+    normalized = re.sub(r'[^\w\s\']', ' ', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized
+
+def calculate_title_similarity(title1, title2):
+    """Calculate similarity between two titles with a flexible approach (0.0 to 1.0)."""
+    norm1 = normalize_track_title(title1)
+    norm2 = normalize_track_title(title2)
+    
+    if norm1 in norm2 or norm2 in norm1:
+        len_ratio = min(len(norm1), len(norm2)) / max(len(norm1), len(norm2))
+        return max(0.8, len_ratio)
+    
+    words1 = set(norm1.split())
+    words2 = set(norm2.split())
+    if not words1 or not words2:
+        return 0.0
+    
+    intersection = len(words1.intersection(words2))
+    if intersection > 0:
+        similarity = intersection / min(len(words1), len(words2))
+        if intersection > 1:
+            similarity = min(1.0, similarity * 1.2)
+        return similarity
+    return 0.0
+
+def artists_match(artist1, artist2):
+    """Compare two artist strings and determine if they match."""
+    norm1 = normalize_artist(artist1)
+    norm2 = normalize_artist(artist2)
+    
+    if norm1 == norm2 or norm1 in norm2 or norm2 in norm1:
+        return True
+    
+    words1 = set(norm1.split())
+    words2 = set(norm2.split())
+    if words1.intersection(words2):
+        if len(words1) <= 2 or len(words2) <= 2:
+            return True
+        intersection = len(words1.intersection(words2))
+        smaller_set = min(len(words1), len(words2))
+        if intersection / smaller_set >= 0.5:
+            return True
+    return False
+
+def find_best_track_match(search_title, search_artist, result_titles, result_artists):
+    """Find the best match in search results with a flexible approach."""
+    best_match_idx = None
+    best_match_score = 0
+    min_title_score = 0.4
+    match_details = []
+    
+    for i, title_elem in enumerate(result_titles):
+        result_title = title_elem.text.strip()
+        title_score = calculate_title_similarity(search_title, result_title)
+        artist_match = True
+        artist_info = ""
+        
+        if search_artist and i < len(result_artists):
+            result_artist = result_artists[i].text.strip()
+            artist_match = artists_match(search_artist, result_artist)
+            artist_info = f"Artist: {search_artist} vs {result_artist} = {artist_match}"
+        
+        match_score = title_score * 0.8
+        if search_artist:
+            match_score += (1.0 if artist_match else 0.0) * 0.2
+        
+        match_details.append({
+            "index": i,
+            "title": result_title,
+            "title_score": title_score,
+            "artist_info": artist_info,
+            "match_score": match_score
+        })
+        
+        if match_score > best_match_score and title_score >= min_title_score:
+            if not artist_match and title_score < 0.8:
+                continue
+            best_match_score = match_score
+            best_match_idx = i
+    
+    return best_match_idx, match_details
+
+# Security and Compliance
 CLIENT_ID = st.secrets.get('SPOTIFY', {}).get('CLIENT_ID')
 CLIENT_SECRET = st.secrets.get('SPOTIFY', {}).get('CLIENT_SECRET')
 
@@ -71,32 +229,7 @@ if not CLIENT_ID or not CLIENT_SECRET:
     st.error("Le credenziali Spotify non sono state configurate in Streamlit Secrets.")
     st.stop()
 
-
-# Inizializza lo stato della sessione
-if 'downloaded_files' not in st.session_state:
-    st.session_state['downloaded_files'] = []
-if 'pending_tracks' not in st.session_state:
-    st.session_state['pending_tracks'] = []
-if 'log_messages' not in st.session_state:
-    st.session_state['log_messages'] = []
-if 'spotify_tracks_cache' not in st.session_state:
-    st.session_state['spotify_tracks_cache'] = {}
-if 'last_cache_update' not in st.session_state:
-    st.session_state['last_cache_update'] = {}
-if 'browser_pool' not in st.session_state:
-    st.session_state['browser_pool'] = []
-if 'user_agent_index' not in st.session_state:
-    st.session_state['user_agent_index'] = 0
-if 'proxy_index' not in st.session_state:
-    st.session_state['proxy_index'] = 0
-if 'download_progress' not in st.session_state:
-    st.session_state['download_progress'] = {}
-if 'download_errors' not in st.session_state:
-    st.session_state['download_errors'] = {}
-if 'servizi_disponibili' not in st.session_state:
-    st.session_state['servizi_disponibili'] = []
-
-# Make sure all required session state keys are initialized
+# Session State Initialization
 required_keys = [
     'downloaded_files', 'pending_tracks', 'log_messages', 'spotify_tracks_cache',
     'last_cache_update', 'browser_pool', 'user_agent_index', 'proxy_index',
@@ -112,51 +245,12 @@ for key in required_keys:
         elif key in ['user_agent_index', 'proxy_index']:
             st.session_state[key] = 0
 
-
-# 6. Configurazione Selenium Avanzata
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    # Aggiungi altri user agent
-]
-PROXY_LIST = [] # Popola questa lista se vuoi usare i proxy
-
-# Configura la directory di download
+# Selenium Configuration
 download_dir = tempfile.mkdtemp()
 st.write(f"Directory di download: {download_dir} (Permessi: {os.access(download_dir, os.W_OK)})")
 
-# 7. Pulizia Risorse
-TEMP_FILE_RETENTION = timedelta(hours=1)
-CACHE_MAX_SIZE = 100 * 1024 * 1024  # 100MB
-
-# Funzione per ottenere il prossimo user agent
-def get_next_user_agent():
-    # Ensure the key is initialized
-    if 'user_agent_index' not in st.session_state:
-        st.session_state['user_agent_index'] = 0
-    
-    user_agent = USER_AGENTS[st.session_state['user_agent_index'] % len(USER_AGENTS)]
-    st.session_state['user_agent_index'] += 1
-    return user_agent
-
-# Funzione per ottenere il prossimo proxy
-def get_next_proxy():
-    # Ensure the key is initialized
-    if 'proxy_index' not in st.session_state:
-        st.session_state['proxy_index'] = 0
-        
-    if PROXY_LIST:
-        proxy = PROXY_LIST[st.session_state['proxy_index'] % len(PROXY_LIST)]
-        st.session_state['proxy_index'] += 1
-        return proxy
-    return None
-
-# Configura le opzioni di Chrome
-# Replace your get_chrome_options function with this one:
 def get_thread_safe_chrome_options(use_proxy=False):
+    """Configure Chrome options in a thread-safe manner."""
     options = webdriver.ChromeOptions()
     prefs = {
         "download.default_directory": download_dir,
@@ -179,29 +273,33 @@ def get_thread_safe_chrome_options(use_proxy=False):
         options.add_argument(f"--proxy-server={proxy}")
     return options
 
-
-# Funzione per creare una nuova istanza del browser
-# Replace your create_browser_instance function with:
 def create_thread_safe_browser_instance(use_proxy=False):
+    """Create a new browser instance with error handling."""
     try:
         return webdriver.Chrome(options=get_thread_safe_chrome_options(use_proxy))
     except Exception as e:
         print(f"Errore nella creazione del browser: {str(e)}")
         try:
-            return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), 
-                                   options=get_thread_safe_chrome_options(use_proxy))
+            return webdriver.Chrome(
+                service=Service("/usr/bin/chromedriver"),
+                options=get_thread_safe_chrome_options(use_proxy)
+            )
         except Exception as e2:
             print(f"Secondo tentativo fallito: {str(e2)}")
             raise
 
+def create_browser_instance(use_proxy=False):
+    """Wrapper for creating browser instances."""
+    return create_thread_safe_browser_instance(use_proxy)
 
-# 3. Ottimizzazione Performance - Browser Pool
 def get_browser_from_pool(use_proxy=False):
+    """Get a browser from the pool or create a new one."""
     if st.session_state['browser_pool']:
         return st.session_state['browser_pool'].pop()
     return create_browser_instance(use_proxy)
 
 def return_browser_to_pool(browser):
+    """Return a browser to the pool."""
     if browser:
         try:
             st.session_state['browser_pool'].append(browser)
@@ -209,260 +307,52 @@ def return_browser_to_pool(browser):
             safe_browser_quit(browser)
             st.error(f"Errore nel ritorno del browser al pool: {str(e)}")
 
-# Formati e qualità disponibili
-FORMATI_DISPONIBILI = {
-    "m4a-aac": "AAC (.m4a)",
-    "mp3": "MP3 (.mp3)",
-    "flac": "FLAC (.flac)",
-    "wav": "WAV (.wav)",
-    "ogg": "OGG (.ogg)"
-}
-QUALITA_DISPONIBILI = {
-    "320": "320 kbps (Alta)",
-    "256": "256 kbps (Media-Alta)",
-    "192": "192 kbps (Media)",
-    "128": "128 kbps (Bassa)"
-}
-
-# Funzione per separare artista e traccia
+# Helper Functions
 def split_title(full_title):
+    """Split title into artist and track."""
     parts = full_title.split(" - ", 1)
     if len(parts) == 2:
         return parts[0].strip(), parts[1].strip()
     return None, full_title.strip()
 
-# Funzione per normalizzare gli artisti
-def normalize_artist(artist_string):
-    if not artist_string:
-        return ""
-    # Normalizza l'artista: rimuovi spazi extra, converti in minuscolo
-    normalized = artist_string.split(',')[0].strip().lower()
-    # Gestisci le varianti comuni come "and", "&", "e"
-    normalized = normalized.replace(" & ", " and ").replace(" ", " ")
-    return normalized
-
-# Add this function to normalize track titles by removing common variations in parentheses
-def normalize_track_title(title):
-    if not title:
-        return ""
-    
-    # Convert to lowercase for case-insensitive comparison
-    normalized = title.lower().strip()
-    
-    # Remove common variations in parentheses
-    patterns = [
-        r'\(original mix\)',
-        r'\(radio edit\)',
-        r'\(extended mix\)',
-        r'\(club mix\)',
-        r'\(remix\)',
-        r'\(edit\)',
-        r'\(radio version\)',
-        r'\(album version\)',
-        r'\(instrumental\)',
-        r'\(acoustic\)',
-        r'\(live\)',
-        r'\(feat\..*?\)',
-        r'\(ft\..*?\)',
-        r'\(featuring.*?\)'
-    ]
-    
-    for pattern in patterns:
-        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
-    
-    # Remove any leftover empty parentheses and trim
-    normalized = re.sub(r'\(\s*\)', '', normalized).strip()
-    
-    # Remove extra whitespace
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    
-    return normalized
-
-
-def normalize_artist(artist_string):
-    """
-    Normalizza il nome dell'artista rimuovendo varianti di congiunzioni come 'and', '&', 'e', ecc.
-    e altre particolarità che potrebbero ostacolare un corretto matching.
-    
-    Args:
-        artist_string: La stringa contenente il nome dell'artista
-        
-    Returns:
-        Una stringa normalizzata per il confronto
-    """
-    if not artist_string:
-        return ""
-    
-    # Converti in minuscolo e rimuovi spazi iniziali/finali
-    normalized = artist_string.lower().strip()
-    
-    # Gestisci le virgole (prendi solo la prima parte se c'è una virgola)
-    if ',' in normalized:
-        normalized = normalized.split(',')[0].strip()
-    
-    # Rimuovi articoli iniziali comuni
-    articles = ['the ', 'a ', 'an ', 'il ', 'lo ', 'la ', 'i ', 'gli ', 'le ']
-    for article in articles:
-        if normalized.startswith(article):
-            normalized = normalized[len(article):]
-    
-    # Sostituisci tutte le varianti di congiunzioni con uno spazio
-    conjunctions = [' and ', ' & ', ' e ', ' et ', ' + ', ' con ', ' feat ', ' feat. ', ' featuring ', ' ft ', ' ft. ', ' vs ', ' vs. ', ' versus ']
-    for conj in conjunctions:
-        normalized = normalized.replace(conj, ' ')
-    
-    # Rimuovi parentesi e il loro contenuto
-    normalized = re.sub(r'\([^)]*\)', '', normalized)
-    normalized = re.sub(r'\[[^\]]*\]', '', normalized)
-    
-    # Rimuovi caratteri non alfanumerici e mantieni solo lettere, numeri e spazi
-    normalized = re.sub(r'[^\w\s]', '', normalized)
-    
-    # Rimuovi spazi multipli e spazi iniziali/finali
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    
-    return normalized
-    
-
-# Da sostituire nel codice esistente per migliorare il matching
-def find_best_track_match(search_title, search_artist, result_titles, result_artists):
-    """
-    Trova il miglior match tra i risultati di ricerca basandosi sul titolo e sull'artista.
-    
-    Args:
-        search_title: Titolo della traccia cercata
-        search_artist: Artista cercato
-        result_titles: Lista di elementi titolo dai risultati
-        result_artists: Lista di elementi artista dai risultati
-        
-    Returns:
-        Indice del miglior match o None se non viene trovato un match valido
-    """
-    best_match_idx = None
-    best_match_score = 0
-    title_threshold = 0.6  # Soglia minima per il match del titolo
-    
-    # Normalizza il titolo cercato
-    normalized_search_title = normalize_track_title(search_title)
-    
-    for i, title_element in enumerate(result_titles):
-        # Ottieni e normalizza il titolo del risultato
-        result_title = title_element.text.strip()
-        normalized_result_title = normalize_track_title(result_title)
-        
-        # Calcola la similarità del titolo
-        title_words_search = set(normalized_search_title.split())
-        title_words_result = set(normalized_result_title.split())
-        
-        if not title_words_search:
-            continue
-            
-        title_similarity = len(title_words_search.intersection(title_words_result)) / len(title_words_search)
-        
-        # Controlla se il titolo è sufficientemente simile
-        if title_similarity >= title_threshold or normalized_search_title in normalized_result_title:
-            # Se abbiamo un artista da confrontare
-            artist_match = True
-            if search_artist and i < len(result_artists):
-                result_artist = result_artists[i].text.strip()
-                artist_match = artists_match(search_artist, result_artist)
-            
-            # Calcola il punteggio complessivo (titolo + artista se disponibile)
-            match_score = title_similarity
-            if search_artist:
-                # Pesare il titolo più dell'artista (70% titolo, 30% artista)
-                match_score = title_similarity * 0.7 + (1.0 if artist_match else 0.0) * 0.3
-            
-            # Se questo match è migliore del precedente, salvalo
-            if match_score > best_match_score:
-                best_match_score = match_score
-                best_match_idx = i
-                
-    return best_match_idx
-
-def artists_match(artist1, artist2, threshold=0.6):
-    """
-    Confronta due stringhe di artisti e determina se sono probabilmente lo stesso artista.
-    
-    Args:
-        artist1: Prima stringa artista
-        artist2: Seconda stringa artista
-        threshold: Soglia minima di similarità (0.0 - 1.0)
-        
-    Returns:
-        True se gli artisti sono considerati corrispondenti, False altrimenti
-    """
-    # Normalizza entrambe le stringhe
-    norm1 = normalize_artist(artist1)
-    norm2 = normalize_artist(artist2)
-    
-    # Se uno contiene completamente l'altro, considera un match
-    if norm1 in norm2 or norm2 in norm1:
-        return True
-    
-    # Dividi in parole e confronta
-    words1 = set(norm1.split())
-    words2 = set(norm2.split())
-    
-    # Se non ci sono parole, non c'è un match
-    if not words1 or not words2:
-        return False
-    
-    # Calcola la somiglianza di Jaccard (intersezione/unione)
-    intersection = len(words1.intersection(words2))
-    union = len(words1.union(words2))
-    
-    similarity = intersection / union if union > 0 else 0
-    
-    return similarity >= threshold
-
-
-# 2. Gestione degli Errori Migliorata - Controllo File Corrotti
 def is_file_complete(filepath, expected_extension):
-    if not os.path.exists(filepath):
-        return False
-    if filepath.endswith(".crdownload"):
+    """Check if a file is complete and matches the expected extension."""
+    if not os.path.exists(filepath) or filepath.endswith(".crdownload"):
         return False
     if not filepath.lower().endswith(expected_extension.lower()):
         return False
     return os.path.getsize(filepath) > 0
 
-# Funzione per aspettare il download
 def wait_for_download(download_dir, existing_files, formato, timeout=180):
+    """Wait for a download to complete."""
     start_time = time.time()
     expected_extension = formato.split('-')[0] if '-' in formato else formato
-
+    
     while time.time() - start_time < timeout:
-        current_files = [os.path
-                          .abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
+        current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
         crdownload_files = glob.glob(os.path.join(download_dir, "*.crdownload"))
-
         new_files = [f for f in current_files if f not in existing_files]
+        
         for file in new_files:
             if is_file_complete(file, expected_extension):
                 return True, f"Download completato: {file}", file
-
-        if crdownload_files:
+        
+        if crdownload_files or time.time() - start_time < 30:
             time.sleep(5)
             continue
-
-        if time.time() - start_time < 30:
-            time.sleep(5)
-            continue
-
+        
         all_new_files = [f for f in os.listdir(download_dir) if os.path.join(download_dir, f) not in existing_files]
-        if all_new_files:
-            for f in all_new_files:
-                full_path = os.path.join(download_dir, f)
-                if os.path.isfile(full_path) and is_file_complete(full_path, expected_extension):
-                    return True, f"Download completato: {f}", full_path
-
+        for f in all_new_files:
+            full_path = os.path.join(download_dir, f)
+            if os.path.isfile(full_path) and is_file_complete(full_path, expected_extension):
+                return True, f"Download completato: {f}", full_path
+        
         time.sleep(5)
-
+    
     return False, f"Timeout raggiunto ({timeout}s), nessun download completato.", None
 
-# Funzione per creare l'archivio ZIP
 def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
+    """Create a ZIP archive of downloaded files."""
     zip_path = os.path.join(download_dir, zip_name)
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -474,20 +364,19 @@ def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricat
         st.session_state['log_messages'].append(f"Errore nella creazione dello ZIP: {str(e)}")
         return None
 
-# Funzione per estrarre l'ID della playlist
 def get_playlist_id(playlist_link):
+    """Extract playlist ID from Spotify link."""
     parsed_url = urlparse(playlist_link)
     if parsed_url.netloc not in ['open.spotify.com']:
         raise ValueError("Link Spotify non valido.")
     match = re.search(r'playlist/(\w+)', parsed_url.path)
     if match:
         return match.group(1)
-    else:
-        raise ValueError("Link della playlist non valido.")
+    raise ValueError("Link della playlist non valido.")
 
-# 3. Ottimizzazione Performance - Cache delle Richieste Spotify & 2. Gestione degli Errori - Ritentativi
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def _get_spotify_tracks(sp, playlist_id):
+    """Fetch tracks from Spotify playlist with retry mechanism."""
     tracks_data = []
     results = sp.playlist_tracks(playlist_id)
     tracks_data.extend(results['items'])
@@ -497,19 +386,20 @@ def _get_spotify_tracks(sp, playlist_id):
     return tracks_data
 
 def get_spotify_tracks(playlist_link):
+    """Get tracks from a Spotify playlist."""
     try:
         auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
         sp = spotipy.Spotify(auth_manager=auth_manager)
         playlist_id = get_playlist_id(playlist_link)
         tracks_data = _get_spotify_tracks(sp, playlist_id)
         return [{"artist": ', '.join([artist['name'] for artist in item['track']['artists']]),
-                "title": item['track']['name']} for item in tracks_data if item['track']]
+                 "title": item['track']['name']} for item in tracks_data if item['track']]
     except Exception as e:
         st.session_state['log_messages'].append(f"Errore nel recupero delle tracce da Spotify: {str(e)}")
         return None
 
-# Funzione per ottenere i servizi disponibili
 def get_available_services(browser):
+    """Get available services from the website."""
     try:
         browser.get("https://lucida.su")
         time.sleep(5)
@@ -523,36 +413,32 @@ def get_available_services(browser):
         st.session_state['log_messages'].append(f"Errore nel recupero dei servizi: {str(e)}")
         return []
 
-# 2. Gestione degli Errori Migliorata - Logging Strutturato
 def log_error(message):
+    """Log error messages to file and session state."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_message = f"[{timestamp}] ERROR: {message}\n"
     with open("error.log", "a") as f:
         f.write(log_message)
     st.session_state['log_messages'].append(f"🔴 {message}")
 
-# Funzione principale per scaricare una traccia
 def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
-    """Self-contained function that doesn't rely on session state"""
-    # Create the track string from track_info
+    """Download a track in a thread-safe manner."""
     if isinstance(track_info, str):
         traccia = track_info
     else:
         traccia = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
-    
-    # Create track_key for tracking
     track_key = traccia
-    
     browser = None
     log_messages = []
     
     try:
-        # Create browser options without using session state
         options = webdriver.ChromeOptions()
-        prefs = {"download.default_directory": download_dir,
-                "download.prompt_for_download": False,
-                "download.directory_upgrade": True,
-                "safebrowsing.enabled": True}
+        prefs = {
+            "download.default_directory": download_dir,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True
+        }
         options.add_experimental_option("prefs", prefs)
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
@@ -562,25 +448,19 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--window-size=1920,1080")
         
-        # Create a separate browser instance for this thread
         browser = webdriver.Chrome(options=options)
-        
-        # Split artist and track name
         artista_input, traccia_input = split_title(traccia)
         log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
         
-        # Navigate to the website
         browser.get("https://lucida.su")
         log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
         
-        # Fill in the search field
         input_field = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "download")))
         input_field.clear()
         input_field.send_keys(traccia)
         time.sleep(2)
         log_messages.append("✍️ Campo input compilato")
         
-        # Select the service
         select_service = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "service")))
         opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
         if servizio_idx >= len(opzioni_service):
@@ -590,7 +470,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "success": False,
                 "downloaded_file": None,
                 "log": log_messages,
-                "status": f"❌ Errore: Indice servizio non valido"
+                "status": "❌ Errore: Indice servizio non valido"
             }
         
         servizio_valore = opzioni_service[servizio_idx].get_attribute("value")
@@ -609,8 +489,9 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
         time.sleep(5)
         
-        # Select country
-        WebDriverWait(browser, 60).until(lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0)
+        WebDriverWait(browser, 60).until(
+            lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0
+        )
         select_country = Select(browser.find_element(By.ID, "country"))
         if not select_country.options:
             log_messages.append(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
@@ -619,31 +500,25 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "success": False,
                 "downloaded_file": None,
                 "log": log_messages,
-                "status": f"❌ Errore: Nessuna opzione paese"
+                "status": "❌ Errore: Nessuna opzione paese"
             }
         select_country.select_by_index(0)
         log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
         time.sleep(1)
         
-        # Clicca sul pulsante "go"
         go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
         go_button.click()
         log_messages.append("▶️ Pulsante 'go' cliccato")
-
-        # Attendi in modo più affidabile che i risultati siano caricati
+        
         try:
             WebDriverWait(browser, 60).until(
-                lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
-                         "No results found" in d.page_source
+                lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
             )
             log_messages.append("🔍 Risultati caricati con successo")
         except Exception as e:
             log_messages.append(f"⚠️ Timeout nell'attesa dei risultati: {str(e)}")
-
-        # Attendi comunque un po' di tempo dopo il caricamento per sicurezza
-        time.sleep(15)
         
-        # Search for results
+        time.sleep(15)
         WebDriverWait(browser, 60).until(
             lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
         )
@@ -651,25 +526,21 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
         
-        # Find the best match
-        titoli = browser.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
-        artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
-        log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
-
-        # Trova il miglior match usando la nuova funzione
-        best_match_idx = find_best_track_match(traccia_input, artista_input, titoli, artisti)
-        best_match_found = best_match_idx is not None
-
-        if best_match_found:
-            # Clicca sul miglior risultato trovato
+        best_match_idx, match_details = find_best_track_match(traccia_input, artista_input, titoli, artisti)
+        for match in match_details:
+            log_messages.append(
+                f"🔍 Match analisi: '{traccia_input}' vs '{match['title']}' - "
+                f"Punteggio titolo: {match['title_score']:.2f}, "
+                f"Match score: {match['match_score']:.2f} - {match['artist_info']}"
+            )
+        
+        if best_match_idx is not None:
             browser.execute_script("arguments[0].scrollIntoView(true);", titoli[best_match_idx])
             time.sleep(1)
             titoli[best_match_idx].click()
-    
-            # Log del risultato selezionato
             selected_title = titoli[best_match_idx].text.strip()
             selected_artist = artisti[best_match_idx].text.strip() if best_match_idx < len(artisti) else ""
-            log_messages.append(f"✅ Traccia trovata e cliccata: '{selected_title}' di '{selected_artist}'")
+            log_messages.append(f"✅ Traccia selezionata: '{selected_title}' di '{selected_artist}' con indice {best_match_idx}")
         else:
             log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
             return {
@@ -677,37 +548,20 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "success": False,
                 "downloaded_file": None,
                 "log": log_messages,
-                "status": f"❌ Errore: Traccia non trovata"
-            }
-
-
-
-        
-        if not best_match_found:
-            log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
-            return {
-                "track_key": track_key,
-                "success": False,
-                "downloaded_file": None,
-                "log": log_messages,
-                "status": f"❌ Errore: Traccia non trovata"
+                "status": "❌ Errore: Traccia non trovata"
             }
         
         time.sleep(5)
-        
-        # Select format
         select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
         select_convert.select_by_value(formato_valore)
-        log_messages.append(f"🎧 Formato selezionato")
+        log_messages.append("🎧 Formato selezionato")
         time.sleep(1)
         
-        # Select quality
         select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
         select_downsetting.select_by_value(qualita_valore)
-        log_messages.append(f"🔊 Qualità selezionata")
+        log_messages.append("🔊 Qualità selezionata")
         time.sleep(1)
         
-        # Start download
         existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
         download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
         browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
@@ -715,10 +569,8 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         download_button.click()
         log_messages.append("⬇️ Pulsante di download cliccato")
         
-        # Wait for download to complete
         success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
         log_messages.append(message)
-        
         return {
             "track_key": track_key,
             "success": success,
@@ -726,18 +578,16 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             "log": log_messages,
             "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
         }
-        
     except Exception as e:
         error_message = f"❌ Errore durante il download: {str(e)}"
         log_messages.append(error_message)
         return {
             "track_key": track_key,
-            "success": False, 
-            "downloaded_file": None, 
+            "success": False,
+            "downloaded_file": None,
             "log": log_messages,
             "status": f"❌ Errore: {str(e)}"
         }
-        
     finally:
         if browser:
             try:
@@ -745,34 +595,8 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             except Exception:
                 pass
 
-# Teniamo traccia dello stato localmente per ciascun thread
-def download_track_wrapper(track_info, servizio_indice, formato_valore, qualita_valore, use_proxy):
-    track_key = f"{track_info.get('artist', '')} - {track_info.get('title', '')}"
-    
-    # Don't rely on st.session_state inside the thread
-    # Instead, create a new browser instance directly
-    browser = create_browser_instance(use_proxy)
-    
-    try:
-        # Execute the download
-        success, downloaded_file, log = _download_single_track_with_browser(
-            browser, track_info, servizio_indice, formato_valore, qualita_valore, use_proxy)
-        
-        # Return a dictionary with all necessary information
-        return {
-            "track_key": track_key,
-            "success": success,
-            "downloaded_file": downloaded_file,
-            "log": log,
-            "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {log[-1] if log else 'Sconosciuto'}"
-        }
-    finally:
-        # Ensure browser is closed
-        safe_browser_quit(browser)
-        
-
-# 7. Pulizia Risorse - Autopulizia File
 def cleanup_temp_files():
+    """Clean up temporary files older than retention period."""
     now = datetime.now()
     for filename in os.listdir(download_dir):
         filepath = os.path.join(download_dir, filename)
@@ -785,8 +609,8 @@ def cleanup_temp_files():
                 except Exception as e:
                     st.session_state['log_messages'].append(f"⚠️ Errore nell'eliminazione di {filename}: {e}")
 
-# Miglioramento della gestione degli errori di Selenium
 def safe_browser_quit(browser):
+    """Safely quit a browser instance."""
     if browser:
         try:
             browser.quit()
@@ -794,13 +618,14 @@ def safe_browser_quit(browser):
             print(f"Errore durante la chiusura del browser: {e}")
 
 def cleanup_browser_pool():
+    """Clean up all browsers in the pool."""
     if 'browser_pool' in st.session_state:
         for browser in st.session_state['browser_pool']:
             safe_browser_quit(browser)
         st.session_state['browser_pool'] = []
 
-# Funzione per chiudere correttamente tutti i browser nel pool
 def close_all_browsers():
+    """Close all browsers in the pool."""
     if 'browser_pool' in st.session_state:
         for browser in st.session_state['browser_pool']:
             try:
@@ -809,21 +634,15 @@ def close_all_browsers():
                 st.session_state['log_messages'].append(f"Errore nella chiusura del browser: {str(e)}")
         st.session_state['browser_pool'] = []
 
-# Registra la funzione di pulizia da eseguire all'uscita
 import atexit
 atexit.register(cleanup_browser_pool)
 
-# Interfaccia Streamlit
+# Streamlit Interface
 st.title("Downloader di Tracce Musicali (PIZZUNA)")
-
-# 1. Sicurezza e Conformità Legale
 st.warning("⚠️ Prima di scaricare, assicurati di rispettare le leggi sul copyright e i termini di servizio delle piattaforme musicali.")
 
-# Configurazione Proxy
 use_proxy = st.sidebar.checkbox("Usa Proxy", False)
 
-# Carica i servizi disponibili
-# Carica i servizi disponibili
 if 'servizi_disponibili' not in st.session_state or not st.session_state['servizi_disponibili']:
     with st.spinner("Caricamento servizi disponibili..."):
         try:
@@ -833,36 +652,24 @@ if 'servizi_disponibili' not in st.session_state or not st.session_state['serviz
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
-            
-            # Use a fixed user agent to avoid session state dependency
             options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            
-            # Create a temporary browser without relying on functions that use session state
             temp_browser = webdriver.Chrome(options=options)
-            
-            # Get available services
             try:
                 st.session_state['servizi_disponibili'] = get_available_services(temp_browser)
             finally:
-                # Always close the browser
                 try:
                     temp_browser.quit()
                 except:
                     pass
-                
             if st.session_state['servizi_disponibili']:
                 st.success(f"Caricati {len(st.session_state['servizi_disponibili'])} servizi disponibili.")
             else:
                 st.warning("Impossibile caricare i servizi disponibili.")
-                # Default services if none are loaded
                 st.session_state['servizi_disponibili'] = [{"index": 1, "value": "1", "text": "Servizio predefinito"}]
         except Exception as e:
             st.error(f"Errore durante il caricamento dei servizi: {str(e)}")
-            # Default services in case of error
             st.session_state['servizi_disponibili'] = [{"index": 1, "value": "1", "text": "Servizio predefinito"}]
 
-
-# Preferenze di download
 st.subheader("Preferenze di download")
 if st.session_state['servizi_disponibili']:
     servizio_opzioni = {f"{s['text']} (Servizio {s['index']})": s['index'] for s in st.session_state['servizi_disponibili']}
@@ -880,10 +687,9 @@ with col2:
     qualita_selezionata = st.selectbox("Qualità audio", options=list(QUALITA_DISPONIBILI.values()), index=0)
     qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
 
-# Numero di thread (dinamico - implementazione semplificata)
-num_threads = st.slider("Numero di download paralleli", min_value=1, max_value=5, value=2, help="Un numero inferiore riduce il rischio di blocchi.")
+num_threads = st.slider("Numero di download paralleli", min_value=1, max_value=5, value=2,
+                        help="Un numero inferiore riduce il rischio di blocchi.")
 
-# Playlist Spotify
 st.subheader("Genera tracce da Spotify")
 playlist_link = st.text_input("Link della playlist Spotify")
 if playlist_link and st.button("Carica Tracce Spotify"):
@@ -895,10 +701,8 @@ if playlist_link and st.button("Carica Tracce Spotify"):
         else:
             st.error("Impossibile recuperare le tracce da Spotify. Controlla il link e le credenziali.")
 
-# Upload file
 uploaded_file = st.file_uploader("Oppure carica il file tracce.txt (artista - titolo)", type=["txt"])
 
-# 4. Usabilità - Anteprima Brani
 st.subheader("Anteprima Tracce")
 tracks_to_download = []
 if 'spotify_tracks' in st.session_state:
@@ -910,20 +714,17 @@ if uploaded_file is not None:
         if len(parts) == 2:
             tracks_to_download.append({"artist": parts[0].strip(), "title": parts[1].strip()})
         elif line.strip():
-            tracks_to_download.append({"title": line.strip(), "artist": None}) # Prova a scaricare solo con il titolo
+            tracks_to_download.append({"title": line.strip(), "artist": None})
 
 if tracks_to_download:
     st.write(f"**Tracce selezionate per il download:** {len(tracks_to_download)}")
-    # 4. Usabilità - Ordinamento Risultati
     sort_by = st.selectbox("Ordina per:", ["Nessuno", "Artista", "Titolo"])
     if sort_by == "Artista":
         tracks_to_download.sort(key=lambda x: x.get('artist', '').lower())
     elif sort_by == "Titolo":
         tracks_to_download.sort(key=lambda x: x.get('title', '').lower())
-
     st.dataframe(tracks_to_download)
 
-# 8. Notifiche e Feedback (implementazione semplice via Streamlit)
 if 'downloaded_files' in st.session_state and st.session_state['downloaded_files'] and st.session_state.get('download_started', False):
     st.balloons()
     st.success(f"🎉 Download completato! {len(st.session_state['downloaded_files'])} tracce scaricate con successo.")
@@ -935,9 +736,7 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     st.session_state['log_messages'] = []
     st.session_state['pending_tracks'] = []
     
-    # Initialize the state dictionary for all tracks
     track_status = {f"{t.get('artist', '')} - {t.get('title', '')}": "In attesa..." for t in tracks_to_download}
-    # Update session state once, not for each thread
     st.session_state['download_progress'] = track_status.copy()
     st.session_state['download_errors'] = {}
     
@@ -945,235 +744,151 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
     num_tracks = len(tracks_to_download)
     downloaded_count = 0
     
-    # Container for download results
     download_results_container = st.container()
-    with download_results_container.container():
+    with download_results_container:
         status_placeholder = st.empty()
-        
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = [
-            executor.submit(
-                download_track_thread_safe, 
-                track, servizio_indice, formato_valore, qualita_valore, use_proxy
-        ) 
-        for track in tracks_to_download
-    ]
-        
-        # Show status during download
-        pending_futures = list(futures)
-        downloaded_files = []
-        pending_tracks = []
-        download_errors = {}
-        
-        while pending_futures:
-            # Update status visually
-            status_text = "<h3>Stato Download in corso:</h3>"
-            for track_key, status in track_status.items():
-                status_class = ""
-                if "In corso" in status:
-                    status_class = "info"
-                elif "✅ Scaricato" in status:
-                    status_class = "success"
-                elif "❌ Errore" in status:
-                    status_class = "error"
-                status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [
+                executor.submit(download_track_thread_safe, track, servizio_indice, formato_valore, qualita_valore, use_proxy)
+                for track in tracks_to_download
+            ]
             
-            status_placeholder.markdown(status_text, unsafe_allow_html=True)
+            pending_futures = list(futures)
+            downloaded_files = []
+            pending_tracks = []
+            download_errors = {}
             
-            # Check completed downloads
-            done, pending_futures = concurrent.futures.wait(
-                pending_futures, 
-                timeout=0.5,
-                return_when=concurrent.futures.FIRST_COMPLETED
-            )
-            
-            # Process completed downloads
-            for future in done:
-                try:
-                    result = future.result()
-                    track_key = result["track_key"]
-                    
-                    # Update local state
-                    track_status[track_key] = result["status"]
-                    
-                    if result["success"] and result["downloaded_file"]:
-                        downloaded_files.append(result["downloaded_file"])
-                        downloaded_count += 1
-                    else:
-                        pending_tracks.append(track_key)
-                        download_errors[track_key] = result["log"]
-                    
-                    # Update progress bar
-                    progress_value = (len(tracks_to_download) - len(pending_futures)) / num_tracks
-                    progress_bar.progress(progress_value)
+            while pending_futures:
+                status_text = "<h3>Stato Download in corso:</h3>"
+                for track_key, status in track_status.items():
+                    status_class = "info" if "In corso" in status else "success" if "✅ Scaricato" in status else "error" if "❌ Errore" in status else ""
+                    status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+                status_placeholder.markdown(status_text, unsafe_allow_html=True)
                 
-                except Exception as e:
-                    st.error(f"Errore nel processare i risultati del download: {str(e)}")
+                done, pending_futures = concurrent.futures.wait(
+                    pending_futures, timeout=0.5, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                
+                for future in done:
+                    try:
+                        result = future.result()
+                        track_key = result["track_key"]
+                        track_status[track_key] = result["status"]
+                        if result["success"] and result["downloaded_file"]:
+                            downloaded_files.append(result["downloaded_file"])
+                            downloaded_count += 1
+                        else:
+                            pending_tracks.append(track_key)
+                            download_errors[track_key] = result["log"]
+                        progress_value = (num_tracks - len(pending_futures)) / num_tracks
+                        progress_bar.progress(progress_value)
+                    except Exception as e:
+                        st.error(f"Errore nel processare i risultati del download: {str(e)}")
+            
+            st.session_state['downloaded_files'] = downloaded_files
+            st.session_state['pending_tracks'] = pending_tracks
+            st.session_state['download_errors'] = download_errors
+            st.session_state['download_progress'] = track_status
+            
+            status_text = "<h3>Stato Download Finale:</h3>"
+            for track_key, status in st.session_state['download_progress'].items():
+                status_class = "info" if "In corso" in status else "success" if "✅ Scaricato" in status else "error" if "❌ Errore" in status else ""
+                status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+            status_placeholder.markdown(status_text, unsafe_allow_html=True)
 
-        # Update session state at the end
-        st.session_state['downloaded_files'] = downloaded_files
-        st.session_state['pending_tracks'] = pending_tracks
-        st.session_state['download_errors'] = download_errors
-        st.session_state['download_progress'] = track_status
-
-
-    # Stato finale
-    status_text = "<h3>Stato Download Finale:</h3>"
-    for track_key, status in st.session_state['download_progress'].items():
-        status_class = ""
-        if "In corso" in status:
-            status_class = "info"
-        elif "✅ Scaricato" in status:
-            status_class = "success"
-        elif "❌ Errore" in status:
-            status_class = "error"
-        status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
-        
-    status_placeholder.markdown(status_text, unsafe_allow_html=True)
-
-    # Add to the existing code after the download process completes
-
-    # Auto-retry functionality for failed tracks
     if st.session_state.get('pending_tracks') and not st.checkbox("Skip auto-retry", value=False):
         st.info(f"🔄 Trovate {len(st.session_state['pending_tracks'])} tracce non scaricate. Tentativo automatico di recupero in corso...")
-    
-        # Prepare tracks for retry
+        
         retry_tracks = []
         for track_key in st.session_state['pending_tracks']:
-            # Convert track_key back to a track object
             parts = track_key.split(" - ", 1)
-            if len(parts) == 2:
-                retry_tracks.append({"artist": parts[0].strip(), "title": parts[1].strip()})
-            else:
-                retry_tracks.append({"artist": "", "title": track_key.strip()})
-    
-        # Attempt with a different service
+            retry_tracks.append({"artist": parts[0].strip(), "title": parts[1].strip()} if len(parts) == 2 else {"artist": "", "title": track_key.strip()})
+        
         alternative_service = None
         available_services = st.session_state['servizi_disponibili']
-    
-        # Find an alternative service
         if len(available_services) > 1:
-            # Use a different service than the current one
             for service in available_services:
                 if service["index"] != servizio_indice:
                     alternative_service = service["index"]
                     break
-    
-        if alternative_service is None:
-            alternative_service = servizio_indice  # Use the same service if no alternative
-        else:
+        alternative_service = alternative_service or servizio_indice
+        if alternative_service != servizio_indice:
             st.info(f"🔄 Tentativo con servizio alternativo (Servizio {alternative_service})")
-
-        # Track retry progress
+        
         retry_progress_bar = st.progress(0)
         retry_status_container = st.container()
-    
-        # Initialize retry tracking
         retry_status = {track["artist"] + " - " + track["title"]: "In attesa..." for track in retry_tracks}
         retry_downloaded_files = []
         retry_pending_tracks = []
         retry_errors = {}
-    
+        
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as retry_executor:
             retry_futures = [
-                retry_executor.submit(
-                    download_track_thread_safe, 
-                    track, alternative_service, formato_valore, qualita_valore, use_proxy
-                ) 
+                retry_executor.submit(download_track_thread_safe, track, alternative_service, formato_valore, qualita_valore, use_proxy)
                 for track in retry_tracks
             ]
-        
-            # Show status during retry
+            
             pending_retry_futures = list(retry_futures)
             retry_downloaded_count = 0
-        
+            
             with retry_status_container:
                 retry_status_placeholder = st.empty()
-            
-            while pending_retry_futures:
-                # Update retry status visually
-                retry_status_text = "<h3>Stato Recupero in corso:</h3>"
-                for track_key, status in retry_status.items():
-                    status_class = ""
-                    if "In corso" in status or "In attesa" in status:
-                        status_class = "info"
-                    elif "✅ Scaricato" in status:
-                        status_class = "success"
-                    elif "❌ Errore" in status:
-                        status_class = "error"
-                    retry_status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
-            
-                retry_status_placeholder.markdown(retry_status_text, unsafe_allow_html=True)
-            
-                # Check completed retries
-                done_retries, pending_retry_futures = concurrent.futures.wait(
-                    pending_retry_futures, 
-                    timeout=0.5,
-                    return_when=concurrent.futures.FIRST_COMPLETED
-                )
-            
-                # Process completed retries
-                for future in done_retries:
-                    try:
-                        result = future.result()
-                        track_key = result["track_key"]
+                while pending_retry_futures:
+                    retry_status_text = "<h3>Stato Recupero in corso:</h3>"
+                    for track_key, status in retry_status.items():
+                        status_class = "info" if "In corso" in status or "In attesa" in status else "success" if "✅ Scaricato" in status else "error" if "❌ Errore" in status else ""
+                        retry_status_text += f"<div class='{status_class}'>{track_key}: {status}</div>"
+                    retry_status_placeholder.markdown(retry_status_text, unsafe_allow_html=True)
                     
-                        # Update status
-                        retry_status[track_key] = result["status"]
+                    done_retries, pending_retry_futures = concurrent.futures.wait(
+                        pending_retry_futures, timeout=0.5, return_when=concurrent.futures.FIRST_COMPLETED
+                    )
                     
-                        if result["success"] and result["downloaded_file"]:
-                            retry_downloaded_files.append(result["downloaded_file"])
-                            retry_downloaded_count += 1
-                        else:
-                            retry_pending_tracks.append(track_key)
-                            retry_errors[track_key] = result["log"]
-                    
-                        # Update progress bar
-                        retry_progress_value = (len(retry_tracks) - len(pending_retry_futures)) / len(retry_tracks)
-                        retry_progress_bar.progress(retry_progress_value)
-                
-                    except Exception as e:
-                        st.error(f"Errore nel processare i risultati del recupero: {str(e)}")
-
-    # Update the main download results with retry results
-    st.session_state['downloaded_files'].extend(retry_downloaded_files)
-    st.session_state['pending_tracks'] = retry_pending_tracks
-    
-    # Update download errors with retry errors
-    for track_key, errors in retry_errors.items():
-        st.session_state['download_errors'][track_key] = errors
-    
-    # Update final status
-    for track_key, status in retry_status.items():
-        st.session_state['download_progress'][track_key] = status
-    
-    # Show final retry results
-    st.write("### Riepilogo Recupero")
-    st.write(f"**Tracce recuperate:** {retry_downloaded_count} / {len(retry_tracks)}")
-    
-    # Show final overall results
-    st.write("### Riepilogo Complessivo")
-    st.write(f"**Totale tracce:** {num_tracks}")
-    st.write(f"**Scaricate con successo:** {downloaded_count + retry_downloaded_count}")
-    st.write(f"**Tracce non recuperabili:** {len(retry_pending_tracks)}")
-    
-    if retry_downloaded_count > 0:
-        st.success(f"🎉 Recupero completato! Recuperate {retry_downloaded_count} tracce aggiuntive.")
-        if retry_downloaded_count == len(retry_tracks):
-            st.balloons()
-    
-    # If there are still pending tracks, show them
-    if retry_pending_tracks:
-        st.write("**Elenco tracce non recuperabili:**")
-        for track_key in retry_pending_tracks:
-            st.write(f"- {track_key}")
+                    for future in done_retries:
+                        try:
+                            result = future.result()
+                            track_key = result["track_key"]
+                            retry_status[track_key] = result["status"]
+                            if result["success"] and result["downloaded_file"]:
+                                retry_downloaded_files.append(result["downloaded_file"])
+                                retry_downloaded_count += 1
+                            else:
+                                retry_pending_tracks.append(track_key)
+                                retry_errors[track_key] = result["log"]
+                            retry_progress_value = (len(retry_tracks) - len(pending_retry_futures)) / len(retry_tracks)
+                            retry_progress_bar.progress(retry_progress_value)
+                        except Exception as e:
+                            st.error(f"Errore nel processare i risultati del recupero: {str(e)}")
         
-        with st.expander("Dettagli errori recupero"):
-            for track_key, errors in retry_errors.items():
-                st.write(f"**{track_key}:**")
-                for error in errors:
-                    st.write(f"- {error}")
-
+        st.session_state['downloaded_files'].extend(retry_downloaded_files)
+        st.session_state['pending_tracks'] = retry_pending_tracks
+        for track_key, errors in retry_errors.items():
+            st.session_state['download_errors'][track_key] = errors
+        for track_key, status in retry_status.items():
+            st.session_state['download_progress'][track_key] = status
+        
+        st.write("### Riepilogo Recupero")
+        st.write(f"**Tracce recuperate:** {retry_downloaded_count} / {len(retry_tracks)}")
+        
+        st.write("### Riepilogo Complessivo")
+        st.write(f"**Totale tracce:** {num_tracks}")
+        st.write(f"**Scaricate con successo:** {downloaded_count + retry_downloaded_count}")
+        st.write(f"**Tracce non recuperabili:** {len(retry_pending_tracks)}")
+        
+        if retry_downloaded_count > 0:
+            st.success(f"🎉 Recupero completato! Recuperate {retry_downloaded_count} tracce aggiuntive.")
+            if retry_downloaded_count == len(retry_tracks):
+                st.balloons()
+        
+        if retry_pending_tracks:
+            st.write("**Elenco tracce non recuperabili:**")
+            for track_key in retry_pending_tracks:
+                st.write(f"- {track_key}")
+            with st.expander("Dettagli errori recupero"):
+                for track_key, errors in retry_errors.items():
+                    st.write(f"**{track_key}:**")
+                    for error in errors:
+                        st.write(f"- {error}")
 
     st.write("### Riepilogo Download")
     st.write(f"**Totale tracce:** {num_tracks}")
@@ -1184,53 +899,39 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         st.write("**Elenco tracce non scaricate:**")
         for track_key in st.session_state['pending_tracks']:
             st.write(f"- {track_key}")
-        
-        if st.session_state['download_errors']:
-            with st.expander("Dettagli errori download"):
-                for track_key, errors in st.session_state['download_errors'].items():
-                    st.write(f"**{track_key}:**")
-                    for error in errors:
-                        st.write(f"- {error}")
+    
+    if st.session_state['download_errors']:
+        with st.expander("Dettagli errori download"):
+            for track_key, errors in st.session_state['download_errors'].items():
+                st.write(f"**{track_key}:**")
+                for error in errors:
+                    st.write(f"- {error}")
 
 st.sidebar.subheader("Disclaimer")
 st.sidebar.info("""
-Questo strumento è fornito a scopo didattico e per uso personale.
-L'utente è responsabile del rispetto delle leggi sul copyright
-e dei termini di servizio delle piattaforme musicali.
-Il download di materiale protetto da copyright senza autorizzazione
-è illegale. Gli sviluppatori non si assumono alcuna responsabilità
-per un uso improprio di questo strumento.
+    Questo strumento è fornito a scopo didattico e per uso personale. L'utente è responsabile del rispetto delle leggi sul copyright e dei termini di servizio delle piattaforme musicali. Il download di materiale protetto da copyright senza autorizzazione è illegale. Gli sviluppatori non si assumono alcuna responsabilità per un uso improprio di questo strumento.
 """)
 
-# Pulizia della sessione (utile per test)
 if st.sidebar.button("Pulisci Sessione"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
 
-# Ulteriore miglioramento usabilità: espansore per le impostazioni avanzate
 with st.sidebar.expander("Impostazioni Avanzate"):
-    # Opzione per forzare il ricaricamento dei servizi
     if st.button("Ricarica Servizi"):
         st.session_state['servizi_disponibili'] = []
         st.rerun()
-
-    # Opzione per visualizzare il log completo
     if st.checkbox("Mostra log completo"):
         st.subheader("Log Completo")
         for log_message in st.session_state.get('log_messages', []):
             st.write(log_message)
+    if st.sidebar.checkbox("Modalità Sorpresa?"):
+        st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)")
+        st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
 
-# Un piccolo easter egg (opzionale)
-if st.sidebar.checkbox("Modalità Sorpresa?"):
-    st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)") # Sostituisci con un link a un'immagine
-    st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
-
-# Messaggio finale per indicare che non ci sono ulteriori implementazioni immediate
 st.markdown("---")
 st.info("L'applicazione è stata potenziata con diverse ottimizzazioni e nuove funzionalità. Ulteriori miglioramenti potrebbero essere implementati in futuro.")
 
-# Funzionalità per scaricare un singolo file ZIP contenente tutte le tracce scaricate
 if st.session_state.get('downloaded_files'):
     st.subheader("Scarica le tracce")
     zip_filename = "tracce_scaricate.zip"
@@ -1243,7 +944,6 @@ if st.session_state.get('downloaded_files'):
                 file_name=zip_filename,
                 mime="application/zip"
             )
-        # Pulizia dei file temporanei dopo aver offerto il download dello ZIP
         cleanup_temp_files()
     else:
         st.error("Errore nella creazione dell'archivio ZIP.")
@@ -1252,7 +952,6 @@ elif st.session_state.get('download_started', False) and not st.session_state.ge
 elif not tracks_to_download:
     st.info("Inserisci un link Spotify o carica un file di testo per avviare il download.")
 
-# Feedback aggiuntivo sull'utilizzo dei proxy
 if use_proxy and not PROXY_LIST:
     st.sidebar.warning("Hai selezionato di usare un proxy, ma la lista dei proxy è vuota. Nessun proxy verrà utilizzato.")
 elif use_proxy and PROXY_LIST:
@@ -1260,37 +959,16 @@ elif use_proxy and PROXY_LIST:
 elif not use_proxy:
     st.sidebar.info("Non stai utilizzando un proxy.")
 
-# Chiusura esplicita del pool di browser quando l'app Streamlit si chiude
-import atexit
-
 atexit.register(close_all_browsers)
-
 st.markdown("---")
 st.info("Grazie per aver utilizzato il Downloader di Tracce Musicali (PIZZUNA)!")
-
 st.markdown("---")
 st.markdown("Sviluppato con ❤️ da un appassionato di musica.")
 
-# Aggiungiamo un po' di stile CSS per migliorare la visualizzazione
 st.markdown("""
-<style>
-    .info {
-        padding: 5px;
-        background-color: #e7f5fe;
-        border-left: 5px solid #2196F3;
-        margin: 5px 0;
-    }
-    .success {
-        padding: 5px;
-        background-color: #e7ffe7;
-        border-left: 5px solid #4CAF50;
-        margin: 5px 0;
-    }
-    .error {
-        padding: 5px;
-        background-color: #ffebee;
-        border-left: 5px solid #f44336;
-        margin: 5px 0;
-    }
-</style>
+    <style>
+    .info { padding: 5px; background-color: #e7f5fe; border-left: 5px solid #2196F3; margin: 5px 0; }
+    .success { padding: 5px; background-color: #e7ffe7; border-left: 5px solid #4CAF50; margin: 5px 0; }
+    .error { padding: 5px; background-color: #ffebee; border-left: 5px solid #f44336; margin: 5px 0; }
+    </style>
 """, unsafe_allow_html=True)
