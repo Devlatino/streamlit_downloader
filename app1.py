@@ -233,9 +233,12 @@ def is_file_complete(filepath, expected_extension):
     return os.path.getsize(filepath) > 0
 
 # Funzione per aspettare il download
-def wait_for_download(download_dir, existing_files, formato, timeout=180):
+def wait_for_download(download_dir, existing_files, formato, track_key, timeout=180):
     start_time = time.time()
     expected_extension = formato.split('-')[0] if '-' in formato else formato
+    artist_part, title_part = split_title(track_key)
+    title_part = title_part.lower().replace(" ", "_").replace("'", "").replace("(", "").replace(")", "")
+    artist_part = artist_part.lower().replace(" ", "_").replace("'", "").replace("(", "").replace(")", "") if artist_part else ""
 
     while time.time() - start_time < timeout:
         current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
@@ -243,7 +246,8 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
 
         new_files = [f for f in current_files if f not in existing_files]
         for file in new_files:
-            if is_file_complete(file, expected_extension):
+            filename = os.path.basename(file).lower()
+            if (title_part in filename or (artist_part and artist_part in filename)) and is_file_complete(file, expected_extension):
                 return True, f"Download completato: {file}", file
 
         if crdownload_files:
@@ -255,15 +259,15 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
             continue
 
         all_new_files = [f for f in os.listdir(download_dir) if os.path.join(download_dir, f) not in existing_files]
-        if all_new_files:
-            for f in all_new_files:
-                full_path = os.path.join(download_dir, f)
-                if os.path.isfile(full_path) and is_file_complete(full_path, expected_extension):
-                    return True, f"Download completato: {f}", full_path
+        for f in all_new_files:
+            full_path = os.path.join(download_dir, f)
+            filename = os.path.basename(full_path).lower()
+            if (title_part in filename or (artist_part and artist_part in filename)) and os.path.isfile(full_path) and is_file_complete(full_path, expected_extension):
+                return True, f"Download completato: {f}", full_path
 
         time.sleep(5)
 
-    return False, f"Timeout raggiunto ({timeout}s), nessun download completato.", None
+    return False, f"Timeout raggiunto ({timeout}s), nessun file corrispondente trovato per '{track_key}'.", None
 
 # Funzione per creare l'archivio ZIP (corretta per evitare duplicati)
 def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
@@ -373,16 +377,17 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
     track_key = traccia
     browser = None
     log_messages = []
+    thread_download_dir = tempfile.mkdtemp()  # Directory temporanea unica per questo thread
 
     try:
         options = webdriver.ChromeOptions()
         prefs = {
-            "download.default_directory": download_dir,
+            "download.default_directory": thread_download_dir,  # Usa directory unica
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True
         }
-        options.add_experimental_option("prefs", prefs)
+        options.add_experimental_option("prefs", prefs
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -398,6 +403,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         browser = webdriver.Chrome(options=options)
         artista_input, traccia_input = split_title(traccia)
         log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
+
 
         browser.get("https://lucida.su")
         log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
@@ -560,15 +566,21 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
         time.sleep(1)
 
-        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
+        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(thread_download_dir, "*.*"))]
         download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
         browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
         time.sleep(1)
         download_button.click()
         log_messages.append("⬇️ Pulsante di download cliccato")
 
-        success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
+        success, message, downloaded_file = wait_for_download(thread_download_dir, existing_files, formato_valore, track_key)
         log_messages.append(message)
+        if success and downloaded_file:
+            new_filename = f"{track_key.replace('/', '_').replace(':', '_')}.{expected_extension}"
+            new_filepath = os.path.join(thread_download_dir, new_filename)
+            os.rename(downloaded_file, new_filepath)
+            downloaded_file = new_filepath
+            log_messages.append(f"✨ File rinominato: {new_filename}")
         return {
             "track_key": track_key,
             "success": success,
@@ -576,6 +588,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             "log": log_messages,
             "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
         }
+
 
     except Exception as e:
         error_message = f"❌ Errore durante il download: {str(e)}"
@@ -909,13 +922,13 @@ st.markdown("""
 <style>
     .info {
         padding: 5px;
-        background-color: #e7f5fe;
+        background-color: #40484d;
         border-left: 5px solid #2196F3;
         margin: 5px 0;
     }
     .success {
         padding: 5px;
-        background-color: #e7ffe7;
+        background-color: #012600;
         border-left: 5px solid #4CAF50;
         margin: 5px 0;
     }
