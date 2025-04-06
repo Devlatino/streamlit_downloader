@@ -358,7 +358,6 @@ def log_error(message):
 
 # Funzione principale per scaricare una traccia
 def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita_valore, use_proxy=False):
-    """Download a track in a thread-safe manner."""
     if isinstance(track_info, str):
         traccia = track_info
     else:
@@ -409,8 +408,8 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         input_field = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "download")))
         input_field.clear()
         input_field.send_keys(traccia)
-        time.sleep(2)  # Ripristinato dalla versione funzionante
-        log_messages.append("✍️ Campo input compilato")
+        log_messages.append(f"✍️ Campo input compilato: '{traccia}'")
+        time.sleep(2)
         
         select_service = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "service")))
         opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
@@ -438,7 +437,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             select.dispatchEvent(svelteEvent);
         """, select_service, servizio_valore)
         log_messages.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
-        time.sleep(5)  # Ripristinato dalla versione funzionante
+        time.sleep(5)
         
         WebDriverWait(browser, 60).until(
             lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0,
@@ -457,17 +456,28 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             }
         select_country.select_by_index(0)
         log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
-        time.sleep(1)  # Ripristinato dalla versione funzionante
+        time.sleep(1)
         
         go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
         go_button.click()
         log_messages.append("▶️ Pulsante 'go' cliccato")
         
-        WebDriverWait(browser, 60).until(
-            lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
-        )
-        log_messages.append("🔍 Risultati caricati con successo")
-        time.sleep(15)  # Ripristinato dalla versione funzionante
+        try:
+            WebDriverWait(browser, 90).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
+            )
+            log_messages.append("🔍 Risultati caricati con successo")
+        except Exception as e:
+            log_messages.append(f"⚠️ Timeout attesa risultati: {str(e)}")
+            log_messages.append(f"📄 Stato pagina: {browser.page_source[:500]}...")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: Timeout caricamento risultati - {str(e)}"
+            }
+        time.sleep(15)
         
         titoli = browser.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
         artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
@@ -477,14 +487,17 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         for i, titolo in enumerate(titoli):
             titolo_testo = titolo.text.strip().lower()
             traccia_testo = traccia_input.lower().strip()
-            titolo_normalizzato = titolo_testo.strip()
-            traccia_normalizzata = traccia_testo.strip()
+            # Normalizzazione più robusta
+            titolo_normalizzato = re.sub(r'[^\w\s]', '', titolo_testo)
+            traccia_normalizzata = re.sub(r'[^\w\s]', '', traccia_testo)
             parole_traccia = set(traccia_normalizzata.split())
             parole_titolo = set(titolo_normalizzato.split())
             match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
+            
             log_messages.append(f"🔍 Confronto: '{traccia_normalizzata}' con '{titolo_normalizzato}' (Match: {match:.2%})")
             
-            if match >= 0.6 or traccia_normalizzata in titolo_normalizzato:
+            # Condizioni di match più flessibili
+            if (match >= 0.5 and len(titoli) > 1) or (match >= 0.2 and len(titoli) == 1) or traccia_normalizzata in titolo_normalizzato:
                 if artista_input and i < len(artisti):
                     artista_risultato = artisti[i].text.strip().lower()
                     artista_normalizzato = normalize_artist(artista_input)
@@ -517,12 +530,12 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "status": "❌ Errore: Traccia non trovata"
             }
         
-        time.sleep(5)  # Ripristinato dalla versione funzionante
+        time.sleep(5)
         
         select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
         select_convert.select_by_value(formato_valore)
         log_messages.append(f"🎧 Formato selezionato: {formato_valore}")
-        time.sleep(1)  # Ripristinato dalla versione funzionante
+        time.sleep(1)
         
         if formato_valore not in ["wav", "original", "bitcrush"]:
             select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
@@ -530,22 +543,22 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 select_downsetting.select_by_value(qualita_valore)
                 log_messages.append(f"🔊 Qualità selezionata: {qualita_valore}")
             except Exception as e:
-                log_messages.append(f"⚠️ Errore selezione qualità: {str(e)} - Opzioni disponibili: {[opt.get_attribute('value') for opt in select_downsetting.options]}")
+                log_messages.append(f"⚠️ Errore selezione qualità: {str(e)}")
                 return {
                     "track_key": track_key,
                     "success": False,
                     "downloaded_file": None,
                     "log": log_messages,
-                    "status": f"❌ Errore: Qualità non valida per {formato_valore}"
+                    "status": f"❌ Errore: Qualità non valida - {str(e)}"
                 }
         else:
             log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
-        time.sleep(1)  # Ripristinato dalla versione funzionante
+        time.sleep(1)
         
         existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
         download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
         browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
-        time.sleep(1)  # Ripristinato dalla versione funzionante
+        time.sleep(1)
         download_button.click()
         log_messages.append("⬇️ Pulsante di download cliccato")
         
@@ -562,6 +575,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
     except Exception as e:
         error_message = f"❌ Errore durante il download: {str(e)}"
         log_messages.append(error_message)
+        log_messages.append(f"📄 Stato pagina: {browser.page_source[:500] if browser else 'Browser non disponibile'}...")
         return {
             "track_key": track_key,
             "success": False,
