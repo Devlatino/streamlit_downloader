@@ -116,10 +116,6 @@ USER_AGENTS = [
 ]
 PROXY_LIST = []  # Popola questa lista se vuoi usare i proxy
 
-# Configura la directory di download
-download_dir = tempfile.mkdtemp()
-st.write(f"Directory di download: {download_dir} (Permessi: {os.access(download_dir, os.W_OK)})")
-
 # 7. Pulizia Risorse
 TEMP_FILE_RETENTION = timedelta(hours=1)
 CACHE_MAX_SIZE = 100 * 1024 * 1024  # 100MB
