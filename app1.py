@@ -265,31 +265,51 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
 
     return False, f"Timeout raggiunto ({timeout}s), nessun download completato.", None
 
-# Funzione per creare l'archivio ZIP
+# Funzione per creare l'archivio ZIP (corretta per evitare duplicati)
 def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
     zip_path = os.path.join(download_dir, zip_name)
     included_files = []
+    unique_files = set()  # Per tracciare i file univoci
+
+    st.session_state['log_messages'].append(f"📦 Creazione ZIP: {zip_path}")
+    st.session_state['log_messages'].append(f"📋 File da includere (originali): {len(downloaded_files)}")
+
+    # Rimuovi duplicati mantenendo l'ordine originale
+    seen_basenames = set()
+    deduplicated_files = []
+    for file_path in downloaded_files:
+        if not file_path or not isinstance(file_path, str):
+            st.session_state['log_messages'].append(f"⚠️ Percorso non valido: {file_path}")
+            continue
+        abs_file_path = os.path.abspath(file_path)
+        basename = os.path.basename(abs_file_path)
+        if basename not in seen_basenames:
+            seen_basenames.add(basename)
+            deduplicated_files.append(abs_file_path)
+        else:
+            st.session_state['log_messages'].append(f"⚠️ Duplicato rimosso: {abs_file_path}")
+
+    st.session_state['log_messages'].append(f"📋 File univoci dopo deduplicazione: {len(deduplicated_files)}")
 
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for file_path in downloaded_files:
-                if not isinstance(file_path, str):
-                    st.session_state['log_messages'].append(f"⚠️ Percorso non valido in downloaded_files: {file_path}")
-                    continue
+            for file_path in deduplicated_files:
                 if os.path.exists(file_path):
                     if os.path.getsize(file_path) > 0:
                         zipf.write(file_path, os.path.basename(file_path))
                         included_files.append(file_path)
+                        unique_files.add(os.path.basename(file_path))
+                        st.session_state['log_messages'].append(f"✅ Aggiunto allo ZIP: {file_path}")
                     else:
-                        st.session_state['log_messages'].append(f"⚠️ File vuoto escluso dallo ZIP: {file_path}")
+                        st.session_state['log_messages'].append(f"⚠️ File vuoto escluso: {file_path}")
                 else:
-                    st.session_state['log_messages'].append(f"⚠️ File non trovato per lo ZIP: {file_path}")
+                    st.session_state['log_messages'].append(f"❌ File non trovato: {file_path}")
 
         if not included_files:
             st.session_state['log_messages'].append("❌ Nessun file valido incluso nello ZIP")
             return None
 
-        st.session_state['log_messages'].append(f"✅ Creato ZIP con {len(included_files)} file: {zip_path}")
+        st.session_state['log_messages'].append(f"✅ ZIP creato con {len(included_files)} file univoci: {zip_path}")
         return zip_path if os.path.exists(zip_path) else None
 
     except Exception as e:
@@ -796,10 +816,20 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
                 except Exception as e:
                     st.error(f"Errore nel processare i risultati del download: {str(e)}")
 
-        # Log dei file scaricati
-        st.session_state['downloaded_files'] = downloaded_files
-        st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
+        # Deduplicazione dei file scaricati
+        unique_downloaded_files = []
+        seen_paths = set()
         for file in downloaded_files:
+            if file and file not in seen_paths:
+                seen_paths.add(file)
+                unique_downloaded_files.append(file)
+            else:
+                st.session_state['log_messages'].append(f"⚠️ Duplicato rimosso dalla lista finale: {file}")
+
+        # Log dei file scaricati
+        st.session_state['downloaded_files'] = unique_downloaded_files
+        st.session_state['log_messages'].append(f"📥 File scaricati registrati (univoci): {len(unique_downloaded_files)}")
+        for file in unique_downloaded_files:
             st.session_state['log_messages'].append(f" - {file}")
 
         st.session_state['pending_tracks'] = pending_tracks
