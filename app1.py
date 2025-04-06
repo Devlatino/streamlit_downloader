@@ -58,10 +58,9 @@ FORMATI_DISPONIBILI = {
     "bitcrush": "Spaccatimpani"
 }
 
-
 # Qualità disponibili per ogni formato
 QUALITA_DISPONIBILI = {
-    "original": {"none": "Nessuna selezione"},  # Nessuna opzione specificata
+    "original": {"none": "Nessuna selezione"},
     "flac": {"16": "16-bit 44.1kHz"},
     "mp3": {
         "320": "320 kb/s",
@@ -89,10 +88,9 @@ QUALITA_DISPONIBILI = {
         "192": "192 kb/s",
         "128": "128 kb/s"
     },
-    "wav": {"none": "Nessuna selezione"},  # Nessuna opzione
-    "bitcrush": {"none": "Nessuna selezione"}  # Nessuna opzione specificata
+    "wav": {"none": "Nessuna selezione"},
+    "bitcrush": {"none": "Nessuna selezione"}
 }
-
 
 # Utility Functions
 def get_thread_safe_user_agent():
@@ -328,7 +326,12 @@ def create_browser_instance(use_proxy=False):
 def get_browser_from_pool(use_proxy=False):
     """Get a browser from the pool or create a new one."""
     if st.session_state['browser_pool']:
-        return st.session_state['browser_pool'].pop()
+        browser = st.session_state['browser_pool'].pop()
+        try:
+            browser.current_url  # Verifica se il browser è ancora attivo
+            return browser
+        except:
+            safe_browser_quit(browser)
     return create_browser_instance(use_proxy)
 
 def return_browser_to_pool(browser):
@@ -357,8 +360,8 @@ def is_file_complete(filepath, expected_extension):
     return os.path.getsize(filepath) > 0
 
 def wait_for_download(download_dir, existing_files, formato, timeout=180):
+    """Wait for a download to complete."""
     start_time = time.time()
-    # Mappa il formato all'estensione attesa
     extension_map = {
         "original": ".*",  # Potrebbe essere qualsiasi formato, usiamo wildcard
         "flac": "flac",
@@ -445,10 +448,10 @@ def get_available_services(browser):
     """Get available services from the website."""
     try:
         browser.get("https://lucida.su")
-        time.sleep(5)
-        select_service = WebDriverWait(browser, 20).until(
+        WebDriverWait(browser, 20).until(
             EC.presence_of_element_located((By.ID, "service"))
         )
+        select_service = browser.find_element(By.ID, "service")
         options = select_service.find_elements(By.TAG_NAME, "option")
         return [{"index": i, "value": opt.get_attribute("value"), "text": opt.text}
                 for i, opt in enumerate(options) if i > 0]
@@ -490,18 +493,26 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--window-size=1920,1080")
+        options.add_argument(f"user-agent={get_thread_safe_user_agent()}")
+        
+        proxy = get_thread_safe_proxy() if use_proxy else None
+        if proxy:
+            options.add_argument(f"--proxy-server={proxy}")
         
         browser = webdriver.Chrome(options=options)
         artista_input, traccia_input = split_title(traccia)
         log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
         
         browser.get("https://lucida.su")
+        if "captcha" in browser.page_source.lower() or "cloudflare" in browser.page_source.lower():
+            log_messages.append("⚠️ Rilevato CAPTCHA o protezione Cloudflare")
+            return {"track_key": track_key, "success": False, "downloaded_file": None, "log": log_messages, "status": "❌ Bloccato da protezione"}
+        
         log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
         
         input_field = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "download")))
         input_field.clear()
         input_field.send_keys(traccia)
-        time.sleep(2)
         log_messages.append("✍️ Campo input compilato")
         
         select_service = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "service")))
@@ -517,22 +528,10 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             }
         
         servizio_valore = opzioni_service[servizio_idx].get_attribute("value")
-        browser.execute_script("""
-            var select = arguments[0];
-            var valore = arguments[1];
-            select.value = valore;
-            var events = ['mousedown', 'click', 'change', 'input', 'blur'];
-            events.forEach(function(eventType) {
-                var event = new Event(eventType, { bubbles: true });
-                select.dispatchEvent(event);
-            });
-            var svelteEvent = new CustomEvent('svelte-change', { bubbles: true });
-            select.dispatchEvent(svelteEvent);
-        """, select_service, servizio_valore)
+        Select(select_service).select_by_value(servizio_valore)
         log_messages.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
-        time.sleep(5)
         
-        WebDriverWait(browser, 60).until(
+        WebDriverWait(browser, 20).until(
             lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0
         )
         select_country = Select(browser.find_element(By.ID, "country"))
@@ -547,24 +546,16 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             }
         select_country.select_by_index(0)
         log_messages.append(f"🌍 Paese selezionato: {select_country.first_selected_option.text}")
-        time.sleep(1)
         
         go_button = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "go")))
         go_button.click()
         log_messages.append("▶️ Pulsante 'go' cliccato")
         
-        try:
-            WebDriverWait(browser, 60).until(
-                lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
-            )
-            log_messages.append("🔍 Risultati caricati con successo")
-        except Exception as e:
-            log_messages.append(f"⚠️ Timeout nell'attesa dei risultati: {str(e)}")
-        
-        time.sleep(15)
         WebDriverWait(browser, 60).until(
             lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
         )
+        log_messages.append("🔍 Risultati caricati con successo")
+        
         titoli = browser.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
         artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
@@ -577,84 +568,73 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 f"Match score: {match['match_score']:.2f} - {match['artist_info']}"
             )
         
-             if best_match_idx is not None:
-                browser.execute_script("arguments[0].scrollIntoView(true);", titoli[best_match_idx])
-                time.sleep(1)
-                titoli[best_match_idx].click()
-                selected_title = titoli[best_match_idx].text.strip()
-                selected_artist = artisti[best_match_idx].text.strip() if best_match_idx < len(artisti) else ""
-                log_messages.append(f"✅ Traccia selezionata: '{selected_title}' di '{selected_artist}' con indice {best_match_idx}")
-            else:
-                log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
-                return {
-                    "track_key": track_key,
-                    "success": False,
-                    "downloaded_file": None,
-                    "log": log_messages,
-                    "status": "❌ Errore: Traccia non trovata"
-                }
-
-            # Selezione del formato
-            select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
-            select_convert.select_by_value(formato_valore)
-            log_messages.append(f"🎧 Formato selezionato: {formato_valore}")
-            time.sleep(1)
-
-            # Selezione della qualità (solo se richiesta dal formato)
-            if formato_valore not in ["wav", "original", "bitcrush"]:  # Formati senza downsetting
-                select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
-                try:
-                    select_downsetting.select_by_value(qualita_valore)
-                    log_messages.append(f"🔊 Qualità selezionata: {qualita_valore}")
-                except Exception as e:
-                    log_messages.append(f"⚠️ Errore selezione qualità: {str(e)} - Opzioni disponibili: {[opt.get_attribute('value') for opt in select_downsetting.options]}")
-                     return {
-                        "track_key": track_key,
-                        "success": False,
-                        "downloaded_file": None,
-                        "log": log_messages,
-                        "status": f"❌ Errore: Qualità non valida per {formato_valore}"
-                    }
-            else:
-                log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
-            time.sleep(1)
-
-            # Avvio del download
-            existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
-            download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
-            browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
-            time.sleep(1)
-            download_button.click()
-            log_messages.append("⬇️ Pulsante di download cliccato")
-
-            # Attesa del download (adattiamo l'estensione in base al formato)
-            expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
-            success, message, downloaded_file = wait_for_download(download_dir, existing_files, expected_extension)
-            log_messages.append(message)
-            return {
-                "track_key": track_key,
-                "success": success,
-                "downloaded_file": downloaded_file,
-                "log": log_messages,
-                "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
-            }
-
-        except Exception as e:
-            error_message = f"❌ Errore durante il download: {str(e)}"
-            log_messages.append(error_message)
+        if best_match_idx is not None:
+            browser.execute_script("arguments[0].scrollIntoView(true);", titoli[best_match_idx])
+            titoli[best_match_idx].click()
+            selected_title = titoli[best_match_idx].text.strip()
+            selected_artist = artisti[best_match_idx].text.strip() if best_match_idx < len(artisti) else ""
+            log_messages.append(f"✅ Traccia selezionata: '{selected_title}' di '{selected_artist}' con indice {best_match_idx}")
+        else:
+            log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
             return {
                 "track_key": track_key,
                 "success": False,
                 "downloaded_file": None,
                 "log": log_messages,
-                "status": f"❌ Errore: {str(e)}"
+                "status": "❌ Errore: Traccia non trovata"
             }
-        finally:
-            if browser:
-                try:
-                    browser.quit()
-                except Exception:
-                    pass
+
+        select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
+        select_convert.select_by_value(formato_valore)
+        log_messages.append(f"🎧 Formato selezionato: {formato_valore}")
+        
+        if formato_valore not in ["wav", "original", "bitcrush"]:
+            select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
+            try:
+                select_downsetting.select_by_value(qualita_valore)
+                log_messages.append(f"🔊 Qualità selezionata: {qualita_valore}")
+            except Exception as e:
+                log_messages.append(f"⚠️ Errore selezione qualità: {str(e)} - Opzioni disponibili: {[opt.get_attribute('value') for opt in select_downsetting.options]}")
+                return {
+                    "track_key": track_key,
+                    "success": False,
+                    "downloaded_file": None,
+                    "log": log_messages,
+                    "status": f"❌ Errore: Qualità non valida per {formato_valore}"
+                }
+        else:
+            log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
+        
+        existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
+        download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
+        browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
+        download_button.click()
+        log_messages.append("⬇️ Pulsante di download cliccato")
+        
+        success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
+        log_messages.append(message)
+        return {
+            "track_key": track_key,
+            "success": success,
+            "downloaded_file": downloaded_file,
+            "log": log_messages,
+            "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
+        }
+    
+    except Exception as e:
+        error_message = f"❌ Errore durante il download: {str(e)}"
+        log_messages.append(error_message)
+        return {
+            "track_key": track_key,
+            "success": False,
+            "downloaded_file": None,
+            "log": log_messages,
+            "status": f"❌ Errore: {str(e)}"
+        }
+    finally:
+        if browser:
+            safe_browser_quit(browser)
+            log_messages.append("🧹 Browser chiuso")
 
 def cleanup_temp_files():
     """Clean up temporary files older than retention period."""
@@ -689,10 +669,7 @@ def close_all_browsers():
     """Close all browsers in the pool."""
     if 'browser_pool' in st.session_state:
         for browser in st.session_state['browser_pool']:
-            try:
-                browser.quit()
-            except Exception as e:
-                st.session_state['log_messages'].append(f"Errore nella chiusura del browser: {str(e)}")
+            safe_browser_quit(browser)
         st.session_state['browser_pool'] = []
 
 import atexit
@@ -718,10 +695,7 @@ if 'servizi_disponibili' not in st.session_state or not st.session_state['serviz
             try:
                 st.session_state['servizi_disponibili'] = get_available_services(temp_browser)
             finally:
-                try:
-                    temp_browser.quit()
-                except:
-                    pass
+                safe_browser_quit(temp_browser)
             if st.session_state['servizi_disponibili']:
                 st.success(f"Caricati {len(st.session_state['servizi_disponibili'])} servizi disponibili.")
             else:
