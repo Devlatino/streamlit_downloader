@@ -46,20 +46,53 @@ PROXY_LIST = []  # Popola questa lista se vuoi usare i proxy
 TEMP_FILE_RETENTION = timedelta(hours=1)
 CACHE_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 
+# Formati disponibili aggiornati
 FORMATI_DISPONIBILI = {
-    "m4a-aac": "AAC (.m4a)",
-    "mp3": "MP3 (.mp3)",
-    "flac": "FLAC (.flac)",
-    "wav": "WAV (.wav)",
-    "ogg": "OGG (.ogg)"
+    "original": "Formato originale (qualità massima)",
+    "flac": "FLAC",
+    "mp3": "MP3",
+    "ogg-vorbis": "OGG Vorbis",
+    "opus": "Opus",
+    "m4a-aac": "M4A AAC",
+    "wav": "WAV",
+    "bitcrush": "Spaccatimpani"
 }
 
+
+# Qualità disponibili per ogni formato
 QUALITA_DISPONIBILI = {
-    "320": "320 kbps (Alta)",
-    "256": "256 kbps (Media-Alta)",
-    "192": "192 kbps (Media)",
-    "128": "128 kbps (Bassa)"
+    "original": {"none": "Nessuna selezione"},  # Nessuna opzione specificata
+    "flac": {"16": "16-bit 44.1kHz"},
+    "mp3": {
+        "320": "320 kb/s",
+        "256": "256 kb/s",
+        "192": "192 kb/s",
+        "128": "128 kb/s"
+    },
+    "ogg-vorbis": {
+        "320": "320 kb/s",
+        "256": "256 kb/s",
+        "192": "192 kb/s",
+        "128": "128 kb/s"
+    },
+    "opus": {
+        "320": "320 kb/s",
+        "256": "256 kb/s",
+        "192": "192 kb/s",
+        "128": "128 kb/s",
+        "96": "96 kb/s",
+        "64": "64 kb/s"
+    },
+    "m4a-aac": {
+        "320": "320 kb/s",
+        "256": "256 kb/s",
+        "192": "192 kb/s",
+        "128": "128 kb/s"
+    },
+    "wav": {"none": "Nessuna selezione"},  # Nessuna opzione
+    "bitcrush": {"none": "Nessuna selezione"}  # Nessuna opzione specificata
 }
+
 
 # Utility Functions
 def get_thread_safe_user_agent():
@@ -324,9 +357,19 @@ def is_file_complete(filepath, expected_extension):
     return os.path.getsize(filepath) > 0
 
 def wait_for_download(download_dir, existing_files, formato, timeout=180):
-    """Wait for a download to complete."""
     start_time = time.time()
-    expected_extension = formato.split('-')[0] if '-' in formato else formato
+    # Mappa il formato all'estensione attesa
+    extension_map = {
+        "original": ".*",  # Potrebbe essere qualsiasi formato, usiamo wildcard
+        "flac": "flac",
+        "mp3": "mp3",
+        "ogg-vorbis": "ogg",
+        "opus": "opus",
+        "m4a-aac": "m4a",
+        "wav": "wav",
+        "bitcrush": "mp3"  # Assumiamo mp3 per bitcrush, da verificare
+    }
+    expected_extension = extension_map.get(formato, formato)
     
     while time.time() - start_time < timeout:
         current_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, f"*.{expected_extension}"))]
@@ -534,7 +577,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 f"Match score: {match['match_score']:.2f} - {match['artist_info']}"
             )
         
-        if best_match_idx is not None:
+         if best_match_idx is not None:
             browser.execute_script("arguments[0].scrollIntoView(true);", titoli[best_match_idx])
             time.sleep(1)
             titoli[best_match_idx].click()
@@ -550,26 +593,43 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
                 "log": log_messages,
                 "status": "❌ Errore: Traccia non trovata"
             }
-        
-        time.sleep(5)
+
+        # Selezione del formato
         select_convert = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "convert"))))
         select_convert.select_by_value(formato_valore)
-        log_messages.append("🎧 Formato selezionato")
+        log_messages.append(f"🎧 Formato selezionato: {formato_valore}")
         time.sleep(1)
-        
-        select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
-        select_downsetting.select_by_value(qualita_valore)
-        log_messages.append("🔊 Qualità selezionata")
+
+        # Selezione della qualità (solo se richiesta dal formato)
+        if formato_valore not in ["wav", "original", "bitcrush"]:  # Formati senza downsetting
+            select_downsetting = Select(WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.ID, "downsetting"))))
+            try:
+                select_downsetting.select_by_value(qualita_valore)
+                log_messages.append(f"🔊 Qualità selezionata: {qualita_valore}")
+            except Exception as e:
+                log_messages.append(f"⚠️ Errore selezione qualità: {str(e)} - Opzioni disponibili: {[opt.get_attribute('value') for opt in select_downsetting.options]}")
+                return {
+                    "track_key": track_key,
+                    "success": False,
+                    "downloaded_file": None,
+                    "log": log_messages,
+                    "status": f"❌ Errore: Qualità non valida per {formato_valore}"
+                }
+        else:
+            log_messages.append("🔊 Nessuna qualità da selezionare per questo formato")
         time.sleep(1)
-        
+
+        # Avvio del download
         existing_files = [os.path.abspath(f) for f in glob.glob(os.path.join(download_dir, "*.*"))]
         download_button = WebDriverWait(browser, 30).until(EC.element_to_be_clickable((By.CLASS_NAME, "download-button")))
         browser.execute_script("arguments[0].scrollIntoView(true);", download_button)
         time.sleep(1)
         download_button.click()
         log_messages.append("⬇️ Pulsante di download cliccato")
-        
-        success, message, downloaded_file = wait_for_download(download_dir, existing_files, formato_valore)
+
+        # Attesa del download (adattiamo l'estensione in base al formato)
+        expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
+        success, message, downloaded_file = wait_for_download(download_dir, existing_files, expected_extension)
         log_messages.append(message)
         return {
             "track_key": track_key,
@@ -578,6 +638,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             "log": log_messages,
             "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
         }
+
     except Exception as e:
         error_message = f"❌ Errore durante il download: {str(e)}"
         log_messages.append(error_message)
@@ -683,9 +744,11 @@ col1, col2 = st.columns(2)
 with col1:
     formato_selezionato = st.selectbox("Formato audio", options=list(FORMATI_DISPONIBILI.values()), index=0)
     formato_valore = list(FORMATI_DISPONIBILI.keys())[list(FORMATI_DISPONIBILI.values()).index(formato_selezionato)]
+
 with col2:
-    qualita_selezionata = st.selectbox("Qualità audio", options=list(QUALITA_DISPONIBILI.values()), index=0)
-    qualita_valore = list(QUALITA_DISPONIBILI.keys())[list(QUALITA_DISPONIBILI.values()).index(qualita_selezionata)]
+    qualita_opzioni = QUALITA_DISPONIBILI[formato_valore]
+    qualita_selezionata = st.selectbox("Qualità audio", options=list(qualita_opzioni.values()), index=0)
+    qualita_valore = list(qualita_opzioni.keys())[list(qualita_opzioni.values()).index(qualita_selezionata)]
 
 num_threads = st.slider("Numero di download paralleli", min_value=1, max_value=5, value=2,
                         help="Un numero inferiore riduce il rischio di blocchi.")
