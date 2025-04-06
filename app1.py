@@ -241,43 +241,6 @@ def normalize_artist(artist_string):
     normalized = normalized.replace(" & ", " and ").replace(" ", " ")
     return normalized
 
-# Add this function to normalize track titles by removing common variations in parentheses
-def normalize_track_title(title):
-    if not title:
-        return ""
-    
-    # Convert to lowercase for case-insensitive comparison
-    normalized = title.lower().strip()
-    
-    # Remove common variations in parentheses
-    patterns = [
-        r'\(original mix\)',
-        r'\(radio edit\)',
-        r'\(extended mix\)',
-        r'\(club mix\)',
-        r'\(remix\)',
-        r'\(edit\)',
-        r'\(radio version\)',
-        r'\(album version\)',
-        r'\(instrumental\)',
-        r'\(acoustic\)',
-        r'\(live\)',
-        r'\(feat\..*?\)',
-        r'\(ft\..*?\)',
-        r'\(featuring.*?\)'
-    ]
-    
-    for pattern in patterns:
-        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
-    
-    # Remove any leftover empty parentheses and trim
-    normalized = re.sub(r'\(\s*\)', '', normalized).strip()
-    
-    # Remove extra whitespace
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    
-    return normalized
-
 
 # 2. Gestione degli Errori Migliorata - Controllo File Corrotti
 def is_file_complete(filepath, expected_extension):
@@ -514,44 +477,52 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
         
         # Find the best match
-    best_match_found = False
-    for i, titolo in enumerate(titoli):
-        # Normalize both the search title and the result title
-        titolo_testo = titolo.text.strip()
-        traccia_normalizzata = normalize_track_title(traccia_input)
-        titolo_normalizzato = normalize_track_title(titolo_testo)
+        best_match_found = False
+        for i, titolo in enumerate(titoli):
+            # Rimuovi gli spazi extra all'inizio e alla fine
+            titolo_testo = titolo.text.strip().lower()
+            traccia_testo = traccia_input.lower().strip()
     
-        # Log the normalized titles for debugging
-        log_messages.append(f"🔍 Confronto normalizzato: '{traccia_normalizzata}' con '{titolo_normalizzato}'")
+            # Normalizza i titoli per confronto
+            titolo_normalizzato = titolo_testo.strip()
+            traccia_normalizzata = traccia_testo.strip()
     
-        # Calculate match score using normalized titles
-        parole_traccia = set(traccia_normalizzata.split())
-        parole_titolo = set(titolo_normalizzato.split())
-        match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
+            # Calcola match standard
+            parole_traccia = set(traccia_normalizzata.split())
+            parole_titolo = set(titolo_normalizzato.split())
+            match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
     
-        # More accurate matching using normalized titles
-        if match >= 0.6 or traccia_normalizzata in titolo_normalizzato:
-            # Also verify the artist, but more flexibly
-            if artista_input and i < len(artisti):
-                artista_risultato = artisti[i].text.strip()
-                artista_normalizzato = normalize_artist(artista_input)
+            log_messages.append(f"🔍 Confronto: '{traccia_normalizzata}' con '{titolo_normalizzato}' (Match: {match:.2%})")
+    
+            # Confronto più flessibile (abbassata soglia a 0.6)
+            if match >= 0.6 or traccia_normalizzata in titolo_normalizzato:
+                # Verifica anche l'artista, ma in modo più flessibile
+                if artista_input and i < len(artisti):
+                    artista_risultato = artisti[i].text.strip().lower()
+                    artista_normalizzato = normalize_artist(artista_input)
             
-                  # Perform artist matching
-                artist_match = (
-                    normalize_artist(artista_risultato).find(artista_normalizzato) >= 0 or
-                    artista_normalizzato.find(normalize_artist(artista_risultato)) >= 0
-                )
+                    # Normalizzazione speciale per confrontare "and" e "&"
+                    artista_normalizzato_and = artista_normalizzato.replace("&", "and")
+                    artista_normalizzato_e = artista_normalizzato.replace("&", "e")
+            
+                    # Controlla diverse varianti dell'artista
+                    artist_match = (
+                        artista_normalizzato in artista_risultato or
+                        artista_normalizzato_and in artista_risultato or
+                        artista_normalizzato_e in artista_risultato or
+                        artista_risultato in artista_normalizzato
+                    )
+            
+                    if not artist_match and match < 0.8:  # Soglia più permissiva
+                        log_messages.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{artista_risultato}'")
+                        continue
         
-                if not artist_match and match < 0.8:
-                    log_messages.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{normalize_artist(artista_risultato)}'")
-                    continue
-    
-            browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
-            time.sleep(1)
-            titolo.click()
-            log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_normalizzato}'")
-            best_match_found = True
-            break
+                browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
+                time.sleep(1)
+                titolo.click()
+                log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_normalizzato}'")
+                best_match_found = True
+                break
 
         
         if not best_match_found:
