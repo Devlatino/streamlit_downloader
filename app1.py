@@ -289,14 +289,32 @@ def wait_for_download(download_dir, existing_files, formato, timeout=180):
 # Funzione per creare l'archivio ZIP
 def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
     zip_path = os.path.join(download_dir, zip_name)
+    included_files = []  # Tieni traccia dei file effettivamente inclusi
+    
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path in downloaded_files:
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                    zipf.write(file_path, os.path.basename(file_path))
+                if not isinstance(file_path, str):
+                    st.session_state['log_messages'].append(f"⚠️ Percorso non valido in downloaded_files: {file_path}")
+                    continue
+                if os.path.exists(file_path):
+                    if os.path.getsize(file_path) > 0:
+                        zipf.write(file_path, os.path.basename(file_path))
+                        included_files.append(file_path)
+                    else:
+                        st.session_state['log_messages'].append(f"⚠️ File vuoto escluso dallo ZIP: {file_path}")
+                else:
+                    st.session_state['log_messages'].append(f"⚠️ File non trovato per lo ZIP: {file_path}")
+        
+        if not included_files:
+            st.session_state['log_messages'].append("❌ Nessun file valido incluso nello ZIP")
+            return None
+        
+        st.session_state['log_messages'].append(f"✅ Creato ZIP con {len(included_files)} file: {zip_path}")
         return zip_path if os.path.exists(zip_path) else None
+    
     except Exception as e:
-        st.session_state['log_messages'].append(f"Errore nella creazione dello ZIP: {str(e)}")
+        st.session_state['log_messages'].append(f"❌ Errore nella creazione dello ZIP: {str(e)}")
         return None
 
 # Funzione per estrarre l'ID della playlist
@@ -801,6 +819,12 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
         ) 
         for track in tracks_to_download
     ]
+
+        # Dopo il ciclo dei futures nella sezione "Avvia Download"
+        st.session_state['downloaded_files'] = downloaded_files
+        st.session_state['log_messages'].append(f"📥 File scaricati registrati: {len(downloaded_files)}")
+        for file in downloaded_files:
+            st.session_state['log_messages'].append(f" - {file}")
         
         # Show status during download
         pending_futures = list(futures)
@@ -943,7 +967,25 @@ if st.session_state.get('downloaded_files'):
                 mime="application/zip"
             )
         # Pulizia dei file temporanei dopo aver offerto il download dello ZIP
-        cleanup_temp_files()
+        if st.session_state.get('downloaded_files'):
+        st.subheader("Scarica le tracce")
+        zip_filename = "tracce_scaricate.zip"
+        zip_path = create_zip_archive(download_dir, st.session_state['downloaded_files'], zip_filename)
+        if zip_path:
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    label="Scarica tutte le tracce come ZIP",
+                    data=f,
+                    file_name=zip_filename,
+                    mime="application/zip"
+                )
+            # Pulizia solo dopo il download
+            if st.button("Pulisci file temporanei dopo il download"):
+                cleanup_temp_files()
+                st.session_state['log_messages'].append("🗑️ File temporanei puliti manualmente")
+                
+    else:
+        st.error("Errore nella creazione dell'archivio ZIP.")
     else:
         st.error("Errore nella creazione dell'archivio ZIP.")
 elif st.session_state.get('download_started', False) and not st.session_state.get('downloaded_files'):
