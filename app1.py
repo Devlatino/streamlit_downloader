@@ -504,11 +504,18 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
         
         browser.get("https://lucida.su")
+        log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
+        
+        # Controllo anti-bot
         if "captcha" in browser.page_source.lower() or "cloudflare" in browser.page_source.lower():
             log_messages.append("⚠️ Rilevato CAPTCHA o protezione Cloudflare")
-            return {"track_key": track_key, "success": False, "downloaded_file": None, "log": log_messages, "status": "❌ Bloccato da protezione"}
-        
-        log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": "❌ Bloccato da protezione"
+            }
         
         input_field = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "download")))
         input_field.clear()
@@ -531,9 +538,23 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         Select(select_service).select_by_value(servizio_valore)
         log_messages.append(f"🔧 Servizio {servizio_idx} selezionato: {opzioni_service[servizio_idx].text}")
         
-        WebDriverWait(browser, 20).until(
-            lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0
-        )
+        # Attesa caricamento opzioni country con logging dettagliato
+        try:
+            WebDriverWait(browser, 20).until(
+                lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0,
+                message="Timeout attesa opzioni 'country'"
+            )
+            log_messages.append("✅ Opzioni 'country' caricate")
+        except Exception as e:
+            log_messages.append(f"⚠️ Errore attesa opzioni 'country': {str(e)}")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: Timeout caricamento opzioni paese - {str(e)}"
+            }
+        
         select_country = Select(browser.find_element(By.ID, "country"))
         if not select_country.options:
             log_messages.append(f"⚠️ Nessuna opzione in 'country' per servizio {servizio_idx}")
