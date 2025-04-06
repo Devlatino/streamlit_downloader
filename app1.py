@@ -522,7 +522,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         input_field.send_keys(traccia)
         log_messages.append("✍️ Campo input compilato")
         
-        select_service = WebDriverWait(browser, 20).until(EC.element_to_be_clickable((By.ID, "service")))
+        select_service = WebDriverWait(browser, 40).until(EC.element_to_be_clickable((By.ID, "service")))
         opzioni_service = select_service.find_elements(By.TAG_NAME, "option")
         if servizio_idx >= len(opzioni_service):
             log_messages.append(f"⚠️ Indice {servizio_idx} non valido per 'service'")
@@ -540,7 +540,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         
         # Attesa caricamento opzioni country con logging dettagliato
         try:
-            WebDriverWait(browser, 20).until(
+            WebDriverWait(browser, 40).until(
                 lambda d: len(d.find_element(By.ID, "country").find_elements(By.TAG_NAME, "option")) > 0,
                 message="Timeout attesa opzioni 'country'"
             )
