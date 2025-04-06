@@ -267,8 +267,11 @@ def wait_for_download(download_dir, existing_files, formato, track_key, timeout=
     return False, f"Timeout raggiunto ({timeout}s), nessun file valido trovato per '{track_key}'. File nella directory: {found_files}", None
 
 # Funzione per creare l'archivio ZIP (corretta per evitare duplicati)
-def create_zip_archive(download_dir, downloaded_files, zip_name="tracce_scaricate.zip"):
-    zip_path = os.path.join(download_dir, zip_name)
+
+def create_zip_archive(downloaded_files, zip_name="tracce_scaricate.zip"):
+    # Crea una directory temporanea per lo ZIP
+    temp_dir = tempfile.mkdtemp()
+    zip_path = os.path.join(temp_dir, zip_name)
     included_files = []
     file_count = {}  # Per rinominare i duplicati
 
@@ -609,16 +612,26 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
 # 7. Pulizia Risorse - Autopulizia File
 def cleanup_temp_files():
     now = datetime.now()
-    for filename in os.listdir(download_dir):
-        filepath = os.path.join(download_dir, filename)
-        if os.path.isfile(filepath):
-            file_creation_time = datetime.fromtimestamp(os.path.getctime(filepath))
-            if now - file_creation_time > TEMP_FILE_RETENTION:
-                try:
-                    os.remove(filepath)
-                    st.session_state['log_messages'].append(f"🗑️ File temporaneo eliminato: {filename}")
-                except Exception as e:
-                    st.session_state['log_messages'].append(f"⚠️ Errore nell'eliminazione di {filename}: {e}")
+    # Raccogli tutte le directory temporanee dai file scaricati
+    temp_dirs = set(os.path.dirname(f) for f in st.session_state.get('downloaded_files', []))
+    for temp_dir in temp_dirs:
+        if os.path.exists(temp_dir):
+            for filename in os.listdir(temp_dir):
+                filepath = os.path.join(temp_dir, filename)
+                if os.path.isfile(filepath):
+                    file_creation_time = datetime.fromtimestamp(os.path.getctime(filepath))
+                    if now - file_creation_time > TEMP_FILE_RETENTION:
+                        try:
+                            os.remove(filepath)
+                            st.session_state['log_messages'].append(f"🗑️ File temporaneo eliminato: {filename}")
+                        except Exception as e:
+                            st.session_state['log_messages'].append(f"⚠️ Errore nell'eliminazione di {filename}: {e}")
+            # Opzionale: rimuovi la directory se vuota
+            try:
+                os.rmdir(temp_dir)
+                st.session_state['log_messages'].append(f"🗑️ Directory temporanea rimossa: {temp_dir}")
+            except OSError:
+                pass  # Directory non vuota o già rimossa
 
 # Miglioramento della gestione degli errori di Selenium
 def safe_browser_quit(browser):
@@ -880,11 +893,12 @@ if st.sidebar.checkbox("Modalità Sorpresa?"):
 st.markdown("---")
 st.info("L'applicazione è stata potenziata con diverse ottimizzazioni e nuove funzionalità. Ulteriori miglioramenti potrebbero essere implementati in futuro.")
 
+
 # Funzionalità per scaricare un singolo file ZIP
 if st.session_state.get('downloaded_files'):
     st.subheader("Scarica le tracce")
     zip_filename = "tracce_scaricate.zip"
-    zip_path = create_zip_archive(download_dir, st.session_state['downloaded_files'], zip_filename)
+    zip_path = create_zip_archive(st.session_state['downloaded_files'], zip_filename)
     if zip_path:
         with open(zip_path, "rb") as f:
             st.download_button(
