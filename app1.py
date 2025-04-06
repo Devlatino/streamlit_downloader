@@ -457,7 +457,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
 
         # Attendi in modo più affidabile che i risultati siano caricati
         try:
-            WebDriverWait(browser, 40).until(
+            WebDriverWait(browser, 60).until(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or 
                          "No results found" in d.page_source
             )
