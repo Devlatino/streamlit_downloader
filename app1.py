@@ -139,7 +139,7 @@ def get_next_proxy():
     return None
 
 # Configura le opzioni di Chrome
-def get_thread_safe_chrome_options(use_proxy=False):
+def get_thread_safe_chrome_options(download_dir, use_proxy=False):  # Aggiunto download_dir come parametro
     options = webdriver.ChromeOptions()
     prefs = {
         "download.default_directory": download_dir,
@@ -161,15 +161,16 @@ def get_thread_safe_chrome_options(use_proxy=False):
         options.add_argument(f"--proxy-server={proxy}")
     return options
 
+
 # Funzione per creare una nuova istanza del browser
-def create_thread_safe_browser_instance(use_proxy=False):
+def create_thread_safe_browser_instance(download_dir, use_proxy=False):  # Aggiunto download_dir
     try:
-        return webdriver.Chrome(options=get_thread_safe_chrome_options(use_proxy))
+        return webdriver.Chrome(options=get_thread_safe_chrome_options(download_dir, use_proxy))
     except Exception as e:
         print(f"Errore nella creazione del browser: {str(e)}")
         try:
             return webdriver.Chrome(service=Service("/usr/bin/chromedriver"),
-                                    options=get_thread_safe_chrome_options(use_proxy))
+                                    options=get_thread_safe_chrome_options(download_dir, use_proxy))
         except Exception as e2:
             print(f"Secondo tentativo fallito: {str(e2)}")
             raise
@@ -382,7 +383,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
     try:
         options = webdriver.ChromeOptions()
         prefs = {
-            "download.default_directory": thread_download_dir,  # Usa directory unica
+            "download.default_directory": thread_download_dir,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True
@@ -837,7 +838,7 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
             for file in downloaded_files:
                 st.session_state['log_messages'].append(f" - {file}")
 
-    # Stato finale
+   # Stato finale
     status_text = "<h3>Stato Download Finale:</h3>"
     for track_key, status in st.session_state['download_progress'].items():
         status_class = "info" if "In attesa" in status else "success" if "✅" in status else "error"
@@ -861,7 +862,29 @@ if st.button("Avvia Download", key="avvia_download_button") and tracks_to_downlo
                     for error in errors:
                         st.write(f"- {error}")
 
-# Sidebar
+if st.session_state.get('downloaded_files'):
+    st.subheader("Scarica le tracce")
+    zip_filename = "tracce_scaricate.zip"
+    zip_path = create_zip_archive(st.session_state['downloaded_files'], zip_filename)
+    if zip_path:
+        with open(zip_path, "rb") as f:
+            st.download_button(
+                label="Scarica tutte le tracce come ZIP",
+                data=f,
+                file_name=zip_filename,
+                mime="application/zip"
+            )
+        if st.button("Pulisci file temporanei dopo il download"):
+            cleanup_temp_files()
+            st.session_state['log_messages'].append("🗑️ File temporanei puliti manualmente")
+    else:
+        st.error("Errore nella creazione dell'archivio ZIP.")
+elif st.session_state.get('download_started', False) and not st.session_state.get('downloaded_files'):
+    st.info("Download in corso... Attendi il completamento per scaricare le tracce.")
+elif not tracks_to_download:
+    st.info("Inserisci un link Spotify o carica un file di testo per avviare il download.")
+
+# Sidebar aggiornata
 st.sidebar.subheader("Disclaimer")
 st.sidebar.info("""
 Questo strumento è fornito a scopo didattico e per uso personale.
@@ -881,7 +904,8 @@ with st.sidebar.expander("Impostazioni Avanzate"):
     if st.button("Ricarica Servizi"):
         st.session_state['servizi_disponibili'] = []
         st.rerun()
-    if st.checkbox("Mostra log completo"):
+    st.session_state['mostra_log_completo'] = st.checkbox("Mostra log completo")
+    if st.session_state['mostra_log_completo']:
         st.subheader("Log Completo")
         for log_message in st.session_state.get('log_messages', []):
             st.write(log_message)
@@ -889,9 +913,6 @@ with st.sidebar.expander("Impostazioni Avanzate"):
 if st.sidebar.checkbox("Modalità Sorpresa?"):
     st.sidebar.markdown("![Pizzuna](https://i.imgur.com/your_pizzuna_image.png)")
     st.markdown("## 🍕 Un tocco di Pizzuna! 🍕")
-
-st.markdown("---")
-st.info("L'applicazione è stata potenziata con diverse ottimizzazioni e nuove funzionalità. Ulteriori miglioramenti potrebbero essere implementati in futuro.")
 
 
 # Funzionalità per scaricare un singolo file ZIP
@@ -912,8 +933,14 @@ if st.session_state.get('downloaded_files'):
             st.session_state['log_messages'].append("🗑️ File temporanei puliti manualmente")
     else:
         st.error("Errore nella creazione dell'archivio ZIP.")
-elif st.session_state.get('download_started', False) and not st.session_state.get('downloaded_files'):
-    st.info("Download in corso... Attendi il completamento per scaricare le tracce.")
+# Parte finale aggiornata
+if st.session_state.get('download_started', False):
+    # Mostra il log completo se richiesto
+    if st.session_state.get('mostra_log_completo', False):
+        st.subheader("Log Completo")
+        for log_message in st.session_state['log_messages']:
+            st.write(log_message)
+
 elif not tracks_to_download:
     st.info("Inserisci un link Spotify o carica un file di testo per avviare il download.")
 
