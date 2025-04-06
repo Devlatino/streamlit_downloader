@@ -404,7 +404,6 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         artista_input, traccia_input = split_title(traccia)
         log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
 
-
         browser.get("https://lucida.su")
         log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
 
@@ -573,14 +572,19 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         download_button.click()
         log_messages.append("⬇️ Pulsante di download cliccato")
 
+        # Definisci expected_extension qui
+        expected_extension = formato_valore.split('-')[0] if '-' in formato_valore else formato_valore
         success, message, downloaded_file = wait_for_download(thread_download_dir, existing_files, formato_valore, track_key)
         log_messages.append(message)
         if success and downloaded_file:
             new_filename = f"{track_key.replace('/', '_').replace(':', '_')}.{expected_extension}"
             new_filepath = os.path.join(thread_download_dir, new_filename)
-            os.rename(downloaded_file, new_filepath)
-            downloaded_file = new_filepath
-            log_messages.append(f"✨ File rinominato: {new_filename}")
+            try:
+                os.rename(downloaded_file, new_filepath)
+                downloaded_file = new_filepath
+                log_messages.append(f"✨ File rinominato: {new_filename}")
+            except OSError as e:
+                log_messages.append(f"⚠️ Errore nella rinominazione del file: {str(e)}")
         return {
             "track_key": track_key,
             "success": success,
@@ -588,7 +592,6 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
             "log": log_messages,
             "status": "✅ Scaricato" if success and downloaded_file else f"❌ Errore: {message}"
         }
-
 
     except Exception as e:
         error_message = f"❌ Errore durante il download: {str(e)}"
