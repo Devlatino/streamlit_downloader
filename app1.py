@@ -279,6 +279,144 @@ def normalize_track_title(title):
     return normalized
 
 
+def normalize_artist(artist_string):
+    """
+    Normalizza il nome dell'artista rimuovendo varianti di congiunzioni come 'and', '&', 'e', ecc.
+    e altre particolarità che potrebbero ostacolare un corretto matching.
+    
+    Args:
+        artist_string: La stringa contenente il nome dell'artista
+        
+    Returns:
+        Una stringa normalizzata per il confronto
+    """
+    if not artist_string:
+        return ""
+    
+    # Converti in minuscolo e rimuovi spazi iniziali/finali
+    normalized = artist_string.lower().strip()
+    
+    # Gestisci le virgole (prendi solo la prima parte se c'è una virgola)
+    if ',' in normalized:
+        normalized = normalized.split(',')[0].strip()
+    
+    # Rimuovi articoli iniziali comuni
+    articles = ['the ', 'a ', 'an ', 'il ', 'lo ', 'la ', 'i ', 'gli ', 'le ']
+    for article in articles:
+        if normalized.startswith(article):
+            normalized = normalized[len(article):]
+    
+    # Sostituisci tutte le varianti di congiunzioni con uno spazio
+    conjunctions = [' and ', ' & ', ' e ', ' et ', ' + ', ' con ', ' feat ', ' feat. ', ' featuring ', ' ft ', ' ft. ', ' vs ', ' vs. ', ' versus ']
+    for conj in conjunctions:
+        normalized = normalized.replace(conj, ' ')
+    
+    # Rimuovi parentesi e il loro contenuto
+    normalized = re.sub(r'\([^)]*\)', '', normalized)
+    normalized = re.sub(r'\[[^\]]*\]', '', normalized)
+    
+    # Rimuovi caratteri non alfanumerici e mantieni solo lettere, numeri e spazi
+    normalized = re.sub(r'[^\w\s]', '', normalized)
+    
+    # Rimuovi spazi multipli e spazi iniziali/finali
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    
+    return normalized
+    
+
+# Da sostituire nel codice esistente per migliorare il matching
+def find_best_track_match(search_title, search_artist, result_titles, result_artists):
+    """
+    Trova il miglior match tra i risultati di ricerca basandosi sul titolo e sull'artista.
+    
+    Args:
+        search_title: Titolo della traccia cercata
+        search_artist: Artista cercato
+        result_titles: Lista di elementi titolo dai risultati
+        result_artists: Lista di elementi artista dai risultati
+        
+    Returns:
+        Indice del miglior match o None se non viene trovato un match valido
+    """
+    best_match_idx = None
+    best_match_score = 0
+    title_threshold = 0.6  # Soglia minima per il match del titolo
+    
+    # Normalizza il titolo cercato
+    normalized_search_title = normalize_track_title(search_title)
+    
+    for i, title_element in enumerate(result_titles):
+        # Ottieni e normalizza il titolo del risultato
+        result_title = title_element.text.strip()
+        normalized_result_title = normalize_track_title(result_title)
+        
+        # Calcola la similarità del titolo
+        title_words_search = set(normalized_search_title.split())
+        title_words_result = set(normalized_result_title.split())
+        
+        if not title_words_search:
+            continue
+            
+        title_similarity = len(title_words_search.intersection(title_words_result)) / len(title_words_search)
+        
+        # Controlla se il titolo è sufficientemente simile
+        if title_similarity >= title_threshold or normalized_search_title in normalized_result_title:
+            # Se abbiamo un artista da confrontare
+            artist_match = True
+            if search_artist and i < len(result_artists):
+                result_artist = result_artists[i].text.strip()
+                artist_match = artists_match(search_artist, result_artist)
+            
+            # Calcola il punteggio complessivo (titolo + artista se disponibile)
+            match_score = title_similarity
+            if search_artist:
+                # Pesare il titolo più dell'artista (70% titolo, 30% artista)
+                match_score = title_similarity * 0.7 + (1.0 if artist_match else 0.0) * 0.3
+            
+            # Se questo match è migliore del precedente, salvalo
+            if match_score > best_match_score:
+                best_match_score = match_score
+                best_match_idx = i
+                
+    return best_match_idx
+
+def artists_match(artist1, artist2, threshold=0.6):
+    """
+    Confronta due stringhe di artisti e determina se sono probabilmente lo stesso artista.
+    
+    Args:
+        artist1: Prima stringa artista
+        artist2: Seconda stringa artista
+        threshold: Soglia minima di similarità (0.0 - 1.0)
+        
+    Returns:
+        True se gli artisti sono considerati corrispondenti, False altrimenti
+    """
+    # Normalizza entrambe le stringhe
+    norm1 = normalize_artist(artist1)
+    norm2 = normalize_artist(artist2)
+    
+    # Se uno contiene completamente l'altro, considera un match
+    if norm1 in norm2 or norm2 in norm1:
+        return True
+    
+    # Dividi in parole e confronta
+    words1 = set(norm1.split())
+    words2 = set(norm2.split())
+    
+    # Se non ci sono parole, non c'è un match
+    if not words1 or not words2:
+        return False
+    
+    # Calcola la somiglianza di Jaccard (intersezione/unione)
+    intersection = len(words1.intersection(words2))
+    union = len(words1.union(words2))
+    
+    similarity = intersection / union if union > 0 else 0
+    
+    return similarity >= threshold
+
+
 # 2. Gestione degli Errori Migliorata - Controllo File Corrotti
 def is_file_complete(filepath, expected_extension):
     if not os.path.exists(filepath):
@@ -513,47 +651,34 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
         log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
         
-        # Replace the matching code in the download_track_thread_safe function with:
-        # Replace the matching code in the download_track_thread_safe function with:
         # Find the best match
-        best_match_found = False
-        for i, titolo in enumerate(titoli):
-            # Normalize both the search title and the result title
-            titolo_testo = titolo.text.strip()
-            traccia_normalizzata = normalize_track_title(traccia_input)
-            titolo_normalizzato = normalize_track_title(titolo_testo)
+        titoli = browser.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")
+        artisti = browser.find_elements(By.CSS_SELECTOR, "h2.svelte-1n1f2yj")
+        log_messages.append(f"📋 Risultati trovati: {len(titoli)} titoli")
+
+        # Trova il miglior match usando la nuova funzione
+        best_match_idx = find_best_track_match(traccia_input, artista_input, titoli, artisti)
+        best_match_found = best_match_idx is not None
+
+        if best_match_found:
+            # Clicca sul miglior risultato trovato
+            browser.execute_script("arguments[0].scrollIntoView(true);", titoli[best_match_idx])
+            time.sleep(1)
+            titoli[best_match_idx].click()
     
-            # Log the normalized titles for debugging
-            log_messages.append(f"🔍 Confronto normalizzato: '{traccia_normalizzata}' con '{titolo_normalizzato}'")
-    
-            # Calculate match score using normalized titles
-            parole_traccia = set(traccia_normalizzata.split())
-            parole_titolo = set(titolo_normalizzato.split())
-            match = len(parole_traccia.intersection(parole_titolo)) / len(parole_traccia) if parole_traccia else 0
-    
-            # More accurate matching using normalized titles
-            if match >= 0.6 or traccia_normalizzata in titolo_normalizzato:
-                # Also verify the artist, but more flexibly
-                if artista_input and i < len(artisti):
-                    artista_risultato = artisti[i].text.strip()
-                    artista_normalizzato = normalize_artist(artista_input)
-        
-                    # Perform artist matching
-                    artist_match = (
-                        normalize_artist(artista_risultato).find(artista_normalizzato) >= 0 or
-                        artista_normalizzato.find(normalize_artist(artista_risultato)) >= 0
-                    )
-        
-                    if not artist_match and match < 0.8:
-                        log_messages.append(f"⚠️ Artista non corrispondente: '{artista_normalizzato}' vs '{normalize_artist(artista_risultato)}'")
-                        continue
-    
-                browser.execute_script("arguments[0].scrollIntoView(true);", titolo)
-                time.sleep(1)
-                titolo.click()
-                log_messages.append(f"✅ Traccia trovata e cliccata: '{titolo_normalizzato}'")
-                best_match_found = True
-                break
+            # Log del risultato selezionato
+            selected_title = titoli[best_match_idx].text.strip()
+            selected_artist = artisti[best_match_idx].text.strip() if best_match_idx < len(artisti) else ""
+            log_messages.append(f"✅ Traccia trovata e cliccata: '{selected_title}' di '{selected_artist}'")
+        else:
+            log_messages.append(f"❌ Traccia non trovata in servizio {servizio_idx}")
+            return {
+                "track_key": track_key,
+                "success": False,
+                "downloaded_file": None,
+                "log": log_messages,
+                "status": f"❌ Errore: Traccia non trovata"
+            }
 
 
 
