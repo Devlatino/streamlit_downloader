@@ -238,7 +238,7 @@ def normalize_artist(artist_string):
     # Normalizza l'artista: rimuovi spazi extra, converti in minuscolo
     normalized = artist_string.split(',')[0].strip().lower()
     # Gestisci le varianti comuni come "and", "&", "e"
-    normalized = normalized.replace(" & ", " and ").replace(" e ", " and ")
+    normalized = normalized.replace(" & ", " and ").replace(" ", " ")
     return normalized
 
 
