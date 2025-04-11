@@ -261,7 +261,7 @@ def is_file_complete(filepath, expected_extension):
     return os.path.getsize(filepath) > 0
 
 # Funzione per aspettare il download
-def wait_for_download(download_dir, existing_files, formato, track_key, timeout=300):
+def wait_for_download(download_dir, existing_files, formato, track_key, timeout=360):
     start_time = time.time()
     artist_part, title_part = split_title(track_key)
     title_part = title_part.lower().replace(" ", "_").replace("'", "").replace("(", "").replace(")", "")
@@ -521,7 +521,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append("▶️ Pulsante 'go' cliccato")
 
         try:
-            WebDriverWait(browser, 120).until(
+            WebDriverWait(browser, 200).until(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
             )
             log_messages.append("🔍 Risultati caricati con successo")
