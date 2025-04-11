@@ -521,7 +521,7 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         log_messages.append("▶️ Pulsante 'go' cliccato")
 
         try:
-            WebDriverWait(browser, 200).until(
+            WebDriverWait(browser, 240).until(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR, "h1.svelte-1n1f2yj")) > 0 or "No results found" in d.page_source
             )
             log_messages.append("🔍 Risultati caricati con successo")
@@ -730,7 +730,7 @@ atexit.register(cleanup_browser_pool)
 st.title("Downloader di Tracce Musicali (PIZZUNA)")
 
 # 1. Sicurezza e Conformità Legale
-st.warning("⚠️ Prima di scaricare, assicurati di rispettare le leggi sul copyright e i termini di servizio delle piattaforme musicali.")
+st.warning("⚠️ Prima di scaricare, assicurati di rispettare le leggi sul copyright e i termini di servizio delle piattaforme musicali. Per problemi di band limit legati all´host attuale , consigliamo di dare in pasto playlist con non più di 25 tracce.")
 
 # Configurazione Proxy
 use_proxy = st.sidebar.checkbox("Usa Proxy", False)
