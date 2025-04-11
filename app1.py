@@ -349,7 +349,7 @@ def get_spotify_tracks(playlist_link):
 # Funzione per ottenere i servizi disponibili
 def get_available_services(browser):
     try:
-        browser.get("https://lucida.su")
+        browser.get("https://lucida.to")
         time.sleep(5)
         select_service = WebDriverWait(browser, 20).until(
             EC.presence_of_element_located((By.ID, "service"))
@@ -405,8 +405,8 @@ def download_track_thread_safe(track_info, servizio_idx, formato_valore, qualita
         artista_input, traccia_input = split_title(traccia)
         log_messages.append(f"🎤 Artista: {artista_input} | 🎵 Traccia: {traccia_input}")
 
-        browser.get("https://lucida.su")
-        log_messages.append(f"🌐 Accesso a lucida.su (servizio {servizio_idx})")
+        browser.get("https://lucida.to")
+        log_messages.append(f"🌐 Accesso a lucida.to (servizio {servizio_idx})")
 
         if "captcha" in browser.page_source.lower() or "cloudflare" in browser.page_source.lower():
             log_messages.append("⚠️ Rilevato CAPTCHA o protezione Cloudflare")
